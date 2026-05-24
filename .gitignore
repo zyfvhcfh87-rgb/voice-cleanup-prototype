@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Build output
+build/
+dist/
+
+# PyInstaller
+*.spec
+
+# Recordings/temp
+recordings/
+audio/recordings/
+*.wav
+*.mp3
+err.txt
+tools/_downloads/
+
+# Settings/local files
+settings.json
+*.log
+.voice_cleanup_app/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Whisper models (large files)
+tools/whisper.cpp/models/
+
+# Git cache
+.gitcache/

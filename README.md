@@ -196,6 +196,10 @@ Run the packaged app:
 
 The build is intentionally `--onedir`, not `--onefile`, because the app depends on Qt plugins, audio libraries, and external Whisper files.
 
+## License
+
+This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for the full license text.
+
 ## Troubleshooting
 
 ### Qt Platform Plugin Error

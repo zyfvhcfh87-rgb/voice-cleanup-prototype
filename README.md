@@ -1,126 +1,238 @@
-# Voice Cleanup AI - Modern Desktop Workspace
+# Voice Cleanup Prototype
 
-A premium, local-first Windows 11 desktop application designed to record spoken speech, transcribe it locally using `whisper.cpp`, perform automated rule-based cleanups, and auto-paste/copy the polished results. 
+A local-first Windows 11 desktop dictation app built with Python and PySide6.
 
-The application has been styled with a high-end glassmorphic theme (harmonious off-white, light purple-to-pink linear gradients, cyan accents, soft drop shadows, and clean margins) and features a circular, 60 FPS glowing floating desktop overlay widget.
+The app records microphone audio, transcribes it locally with `whisper.cpp`, optionally cleans the transcription with a local Ollama model, then copies or auto-pastes the final text into the active application.
 
----
+## Current Features
 
-## Technical File Structure
+- PySide6 desktop UI
+- Button-based recording
+- Global push-to-talk workflow
+- Small desktop microphone overlay
+- Local `whisper.cpp` transcription
+- Optional local Ollama cleanup
+- Rule/no-op fallback cleanup behavior
+- Clipboard copy and optional auto-paste
+- Local settings, recordings, and logs under `%LOCALAPPDATA%\VoiceCleanupPrototype`
+- PyInstaller onedir Windows build
+
+## Project Structure
 
 ```text
 .
-├── main.py                    # App entrypoint (with dynamic Windows DLL search resolution)
-├── build_exe.ps1              # Automation build script for PyInstaller executable compiling
-├── audio/
-│   ├── __init__.py
-│   └── recorder.py            # Local sounddevice microphone recording (16kHz PCM)
-├── cleanup/
-│   ├── __init__.py
-│   └── ai_cleanup.py          # AI Rule-based cleanup engines
-├── config/
-│   ├── __init__.py
-│   └── settings.py            # Local settings management (localized to LOCALAPPDATA)
-├── frontend/
-│   ├── __init__.py
-│   ├── ui.py                  # Visible main application (rounded 2-column card architecture)
-│   ├── overlay.py             # Floating circular glassmorphic microphone overlay (pulsing animation)
-│   └── styles.py              # Brand styling stylesheets (QSS), GlassCard, and custom TitleBar
-├── transcription/
-│   ├── __init__.py
-│   └── whisper_engine.py      # Local whisper.cpp CLI integration worker
-├── requirements.txt           # Main environment dependencies
-└── README.md                  # System instruction and documentation
+|-- main.py
+|-- build_exe.ps1
+|-- diagnose_audio.py
+|-- requirements.txt
+|-- audio/
+|   |-- recorder.py
+|-- cleanup/
+|   |-- ai_cleanup.py
+|   |-- ollama_cleanup.py
+|-- config/
+|   |-- settings.py
+|-- frontend/
+|   |-- hotkey_controller.py
+|   |-- overlay.py
+|   |-- styles.py
+|   |-- ui.py
+|-- transcription/
+|   |-- whisper_engine.py
+|-- tools/
+|   |-- whisper.cpp/
+|       |-- whisper-cli.exe
+|       |-- *.dll
+|       |-- models/
+|           |-- ggml-base.bin
 ```
 
----
+The Whisper model file is intentionally ignored by Git because it is large.
 
 ## Local Development Setup
 
-To run the application from source using Python:
+Open PowerShell in the project folder.
 
-1. **Initialize and Activate Virtual Environment**:
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
 
-2. **Install Package Dependencies**:
-   ```powershell
-   python -m pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+Run the app:
 
-3. **Launch Workspace**:
-   ```powershell
-   .venv\Scripts\python.exe main.py
-   ```
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
 
----
+## whisper.cpp Setup
 
-## Packaging Standalone Executable (.exe)
+The app expects these default paths:
 
-You can compile the workspace into a standalone Windows directory that runs natively without needing a Python installation.
+```text
+tools/whisper.cpp/whisper-cli.exe
+tools/whisper.cpp/models/ggml-base.bin
+```
 
-### How to Build:
-1. Open PowerShell in the project directory.
-2. Run the automated build script:
-   ```powershell
-   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-   .\build_exe.ps1
-   ```
-3. The build compiler will:
-   - Compile Python sources into optimized binaries inside `dist/VoiceCleanupPrototype/`.
-   - Copy the required `tools/` folder structure (whisper engine assets) directly into the compiled folder.
-   - Clean up temporary builder directories.
+The executable and DLL files are stored in `tools/whisper.cpp/`. The model file should be placed in `tools/whisper.cpp/models/`.
 
-### Distributable Package Layout:
-After packaging completes, your compiled distribution folder in `dist/VoiceCleanupPrototype/` has this layout:
+To verify whisper.cpp manually:
+
+```powershell
+.\tools\whisper.cpp\whisper-cli.exe -m .\tools\whisper.cpp\models\ggml-base.bin .\tools\whisper.cpp\test_recording.wav
+```
+
+The app runs `whisper-cli.exe` as a hidden Windows subprocess, so no terminal window should flash during transcription.
+
+## Optional Local AI Cleanup with Ollama
+
+Ollama cleanup is optional and runs fully locally. It sends the raw Whisper transcription to Ollama for punctuation, capitalization, and grammar cleanup.
+
+Install Ollama, then pull and run the default model:
+
+```powershell
+ollama pull qwen2.5:1.5b
+ollama run qwen2.5:1.5b
+```
+
+Default cleanup settings:
+
+```text
+Cleanup backend: Ollama local model
+Ollama URL: http://localhost:11434
+Model: qwen2.5:1.5b
+Prompt: Clean up this dictation. Fix punctuation, capitalization, and grammar. Keep the original meaning. Do not add new information. Return only the cleaned text.
+```
+
+Supported starter models:
+
+```text
+qwen2.5:1.5b
+qwen2.5:3b
+llama3.2:3b
+```
+
+If Ollama is not running, or the selected model is missing, the app shows a clear warning and falls back to the raw transcription so copy and auto-paste workflows can still complete.
+
+## Push-To-Talk
+
+The app includes a Windows global push-to-talk mode.
+
+Default behavior:
+
+- Hold `Ctrl + Windows` to record.
+- Release either key to stop recording.
+- The app transcribes the audio, runs cleanup, copies the final text, and optionally pastes it into the previously focused app.
+
+Fallback hotkeys are available in settings if the Windows key shortcut is intercepted by the OS:
+
+```text
+Ctrl + Alt
+Ctrl + Shift + Space
+```
+
+Related settings:
+
+- Enable global push-to-talk
+- Enable auto-paste
+- Enable overlay
+- Hotkey choice
+
+## Local Data
+
+Settings, recordings, and logs are stored outside the project folder:
+
+```text
+%LOCALAPPDATA%\VoiceCleanupPrototype\settings.json
+%LOCALAPPDATA%\VoiceCleanupPrototype\recordings\
+%LOCALAPPDATA%\VoiceCleanupPrototype\recording_debug.log
+```
+
+This keeps the app safer to package and avoids committing local audio or settings.
+
+## Audio Diagnostics
+
+To list microphones and test a short recording:
+
+```powershell
+.\.venv\Scripts\python.exe diagnose_audio.py
+```
+
+The diagnostic script writes a test file to:
+
+```text
+%LOCALAPPDATA%\VoiceCleanupPrototype\recordings\test_recording.wav
+```
+
+## Packaging The Windows EXE
+
+Use the included PyInstaller script:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\build_exe.ps1
+```
+
+The build output is:
 
 ```text
 dist/VoiceCleanupPrototype/
-├── VoiceCleanupPrototype.exe       # Main compiled application executable
-├── tools/                          # AI Engines and Models folder (External to keep binary small)
-│   └── whisper.cpp/
-│       ├── whisper-cli.exe         # Local transcription engine
-│       ├── SDL2.dll, whisper.dll   # Engine dependencies
-│       └── models/
-│           └── ggml-base.bin       # Whisper AI model weights file
-└── [PySide6, sounddevice libraries, etc.]
+|-- VoiceCleanupPrototype.exe
+|-- tools/
+|   |-- whisper.cpp/
+|       |-- whisper-cli.exe
+|       |-- *.dll
+|       |-- models/
+|           |-- ggml-base.bin
+|-- _internal/
 ```
 
-*Note: The Whisper model weights (`.bin`) and local compiler CLI are deliberately kept external rather than bundled inside the `.exe` itself. This keeps loading times extremely fast and memory consumption highly efficient.*
+Run the packaged app:
 
----
+```powershell
+.\dist\VoiceCleanupPrototype\VoiceCleanupPrototype.exe
+```
 
-## System Configuration & Parameters
+The build is intentionally `--onedir`, not `--onefile`, because the app depends on Qt plugins, audio libraries, and external Whisper files.
 
-- **Settings Directory**: Your configuration files are stored safely outside the installation directories:
-  ```text
-  %LOCALAPPDATA%\VoiceCleanupPrototype\settings.json
-  ```
-- **Local Media & Logs**: Temporary wave files and diagnostic audio runtime traces are saved inside:
-  ```text
-  %LOCALAPPDATA%\VoiceCleanupPrototype\recordings\
-  %LOCALAPPDATA%\VoiceCleanupPrototype\recording_debug.log
-  ```
+## Troubleshooting
 
----
+### Qt Platform Plugin Error
 
-## Advanced Troubleshooting & Diagnostic Guide
+If the app reports that it cannot find the Qt platform plugin `windows`, rebuild with:
 
-### 1. Windows Defender / Antivirus SmartScreen Blocks
-Because PyInstaller bundles Python and custom DLL libraries into a new, unsigned `.exe` on your local machine, Windows SmartScreen or Windows Defender might flag the compiled executable as a warning.
-- **Why this happens**: This is a standard security behavior for any custom compiled, unsigned software built on a local developer workstation. 
-- **How to resolve**: Click **"More Info"** in the Windows SmartScreen pop-up, then click **"Run Anyway"**. Alternatively, you can add your `dist/` directory to Windows Defender's Exclusion List.
+```powershell
+.\build_exe.ps1
+```
 
-### 2. Qt Platform Plugin Initialization Failure
-If you receive the error `Could not find the Qt platform plugin "windows"`, this is typically caused by:
-- **Comma in Folder Path**: Qt has a known parsing behavior on Windows where it splits path definitions on commas (`,`). If the path to your folder contains a comma (e.g. `...\Voice to text, and cleanup application\...`), Qt will fail to resolve its libraries!
-- **Resolution**: We have built an automated startup guard in `main.py` that dynamically registers `os.add_dll_directory` and sets `QT_QPA_PLATFORM_PLUGIN_PATH` directly to the absolute plugins path, bypassing this bug. If issues persist, ensure the project resides in a parent folder path containing no spaces or special symbols (like commas).
+The build script copies the required `qwindows.dll` platform plugin into the packaged app.
 
-### 3. Microphone Access / PortAudio Failure
-If you receive a recording or device access error:
-- Ensure your system's global Windows Privacy settings allow desktop applications to access the microphone.
-- Close other applications (like Microsoft Teams, Zoom, or Discord) that might have exclusive lock access on your current audio input channel.
-- Use the **Refresh** button inside the settings card to reload your active soundcard drivers.
+### Microphone Access Errors
+
+If recording fails:
+
+- Check Windows microphone privacy settings.
+- Make sure desktop apps are allowed to use the microphone.
+- Close apps that may be exclusively using the microphone, such as Teams, Discord, Zoom, or browser tabs.
+- Run `diagnose_audio.py` to verify the selected input device.
+
+### Ollama Cleanup Errors
+
+If cleanup says Ollama is not running:
+
+```powershell
+ollama run qwen2.5:1.5b
+```
+
+If cleanup says the model is missing:
+
+```powershell
+ollama pull qwen2.5:1.5b
+```
+
+You can also disable cleanup or choose `none` as the cleanup backend in settings.
+
+### Windows SmartScreen
+
+Locally built PyInstaller executables are unsigned. Windows may warn before opening the app. Use "More info" then "Run anyway", or add the `dist` folder to your local Defender exclusions while testing.

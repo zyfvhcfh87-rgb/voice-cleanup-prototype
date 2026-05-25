@@ -1,6 +1,11 @@
 import re
 
 
+class NoOpCleaner:
+    def clean(self, text: str) -> str:
+        return text.strip()
+
+
 class RuleBasedCleaner:
     def __init__(self, prompt: str = "") -> None:
         self.prompt = prompt

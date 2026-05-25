@@ -21,6 +21,10 @@ else:
 
 DEFAULT_WHISPER_EXE_PATH = PROJECT_ROOT / "tools" / "whisper.cpp" / "whisper-cli.exe"
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "tools" / "whisper.cpp" / "models" / "ggml-base.bin"
+DEFAULT_CLEANUP_PROMPT = (
+    "Clean up this dictation. Fix punctuation, capitalization, and grammar. "
+    "Keep the original meaning. Do not add new information. Return only the cleaned text."
+)
 
 
 @dataclass
@@ -29,7 +33,11 @@ class AppSettings:
     model_size: str = "base"
     whisper_exe_path: str = str(DEFAULT_WHISPER_EXE_PATH)
     model_path: str = str(DEFAULT_MODEL_PATH)
-    cleanup_prompt: str = "Clean up this dictation while keeping the original meaning."
+    cleanup_prompt: str = DEFAULT_CLEANUP_PROMPT
+    cleanup_backend: str = "ollama"
+    cleanup_enabled: bool = True
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5:1.5b"
     enable_global_push_to_talk: bool = True
     enable_auto_paste: bool = True
     overlay_enabled: bool = True

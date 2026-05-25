@@ -30,7 +30,21 @@ class WhisperCppEngine:
             str(output_base),
         ]
 
-        result = subprocess.run(command, capture_output=True, text=True)
+        startupinfo = None
+        creationflags = 0
+        if hasattr(subprocess, "STARTUPINFO"):
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags = subprocess.CREATE_NO_WINDOW
+
+        result = subprocess.run(
+            command,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
+            capture_output=True,
+            text=True,
+        )
         if result.returncode != 0:
             details = result.stderr.strip() or result.stdout.strip()
             raise RuntimeError(f"whisper.cpp failed: {details}")

@@ -4,3 +4,4 @@ numpy>=1.26
 pynput>=1.7
 pyautogui>=0.9
 pyperclip>=1.8
+requests>=2.32

@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
 )
 
 from audio.recorder import AudioRecorder, list_input_devices, log_event
-from cleanup.ai_cleanup import RuleBasedCleaner
+from cleanup.ai_cleanup import NoOpCleaner
+from cleanup.ollama_cleanup import OllamaCleaner
 from config.settings import AppSettings, load_settings, save_settings
 from frontend.hotkey_controller import PushToTalkHotkeyController
 from frontend.overlay import MicrophoneOverlay
@@ -33,6 +34,7 @@ from frontend.styles import QSS_STYLING, TitleBar, GlassCard
 class TranscriptionWorker(QThread):
     finished_ok = Signal(str, str)
     failed = Signal(str)
+    cleanup_warning = Signal(str)
 
     def __init__(self, engine: WhisperCppEngine, cleaner: RuleBasedCleaner, wav_path: Path) -> None:
         super().__init__()
@@ -46,7 +48,14 @@ class TranscriptionWorker(QThread):
             raw_text = self.engine.transcribe(self.wav_path)
             log_event("transcription finished")
             log_event("cleanup started")
-            cleaned_text = self.cleaner.clean(raw_text)
+            try:
+                cleaned_text = self.cleaner.clean(raw_text)
+            except Exception as exc:
+                warning = str(exc)
+                log_event(f"cleanup failed, falling back to raw text: {repr(exc)}")
+                log_event(traceback.format_exc())
+                self.cleanup_warning.emit(warning)
+                cleaned_text = raw_text
             log_event("cleanup finished")
             self.finished_ok.emit(raw_text, cleaned_text)
         except Exception as exc:
@@ -74,6 +83,7 @@ class MainWindow(QMainWindow):
         self.worker: TranscriptionWorker | None = None
         self.worker_source = "manual"
         self.push_to_talk_state = "idle"
+        self.last_cleanup_warning = ""
 
         self._build_ui()
         self.setStyleSheet(QSS_STYLING)
@@ -228,6 +238,32 @@ class MainWindow(QMainWindow):
         self.cleanup_prompt_edit.setFixedHeight(75)
         card3_layout.addWidget(self.cleanup_prompt_edit)
 
+        cleanup_row = QHBoxLayout()
+        self.cleanup_enabled_checkbox = QCheckBox("Enable Cleanup")
+        self.cleanup_backend_combo = QComboBox()
+        self.cleanup_backend_combo.addItem("None", "none")
+        self.cleanup_backend_combo.addItem("Ollama local model", "ollama")
+        cleanup_row.addWidget(self.cleanup_enabled_checkbox)
+        cleanup_row.addWidget(self.cleanup_backend_combo, 1)
+        card3_layout.addLayout(cleanup_row)
+
+        ollama_url_row = QHBoxLayout()
+        lbl_ollama_url = QLabel("Ollama URL:")
+        self.ollama_url_edit = QLineEdit()
+        self.ollama_url_edit.setPlaceholderText("http://localhost:11434")
+        ollama_url_row.addWidget(lbl_ollama_url)
+        ollama_url_row.addWidget(self.ollama_url_edit, 1)
+        card3_layout.addLayout(ollama_url_row)
+
+        ollama_model_row = QHBoxLayout()
+        lbl_ollama_model = QLabel("Ollama Model:")
+        self.ollama_model_combo = QComboBox()
+        self.ollama_model_combo.setEditable(True)
+        self.ollama_model_combo.addItems(["qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:3b"])
+        ollama_model_row.addWidget(lbl_ollama_model)
+        ollama_model_row.addWidget(self.ollama_model_combo, 1)
+        card3_layout.addLayout(ollama_model_row)
+
         chk_grid = QGridLayout()
         self.enable_ptt_checkbox = QCheckBox("Enable Global PTT")
         self.enable_auto_paste_checkbox = QCheckBox("Auto-Paste Text")
@@ -333,6 +369,15 @@ class MainWindow(QMainWindow):
         self.whisper_exe_edit.setText(self.settings.whisper_exe_path)
         self.model_path_edit.setText(self.settings.model_path)
         self.cleanup_prompt_edit.setPlainText(self.settings.cleanup_prompt)
+        self.cleanup_enabled_checkbox.setChecked(self.settings.cleanup_enabled)
+        cleanup_index = self.cleanup_backend_combo.findData(self.settings.cleanup_backend)
+        self.cleanup_backend_combo.setCurrentIndex(cleanup_index if cleanup_index >= 0 else 1)
+        self.ollama_url_edit.setText(self.settings.ollama_url)
+        ollama_model_index = self.ollama_model_combo.findText(self.settings.ollama_model)
+        if ollama_model_index >= 0:
+            self.ollama_model_combo.setCurrentIndex(ollama_model_index)
+        else:
+            self.ollama_model_combo.setEditText(self.settings.ollama_model)
         self.enable_ptt_checkbox.setChecked(self.settings.enable_global_push_to_talk)
         self.enable_auto_paste_checkbox.setChecked(self.settings.enable_auto_paste)
         self.overlay_enabled_checkbox.setChecked(self.settings.overlay_enabled)
@@ -346,6 +391,10 @@ class MainWindow(QMainWindow):
             whisper_exe_path=self.whisper_exe_edit.text().strip(),
             model_path=self.model_path_edit.text().strip(),
             cleanup_prompt=self.cleanup_prompt_edit.toPlainText().strip(),
+            cleanup_backend=self.cleanup_backend_combo.currentData(),
+            cleanup_enabled=self.cleanup_enabled_checkbox.isChecked(),
+            ollama_url=self.ollama_url_edit.text().strip() or "http://localhost:11434",
+            ollama_model=self.ollama_model_combo.currentText().strip() or "qwen2.5:1.5b",
             enable_global_push_to_talk=self.enable_ptt_checkbox.isChecked(),
             enable_auto_paste=self.enable_auto_paste_checkbox.isChecked(),
             overlay_enabled=self.overlay_enabled_checkbox.isChecked(),
@@ -444,15 +493,17 @@ class MainWindow(QMainWindow):
                 return
 
             self.status_label.setText("System Status: Transcribing...")
+            self.last_cleanup_warning = ""
             self.worker_source = "manual"
             engine = WhisperCppEngine(
                 executable_path=settings.whisper_exe_path,
                 model_path=settings.model_path,
             )
-            cleaner = RuleBasedCleaner(settings.cleanup_prompt)
+            cleaner = self._create_cleaner(settings)
             self.worker = TranscriptionWorker(engine, cleaner, wav_path)
             self.worker.finished_ok.connect(self._transcription_finished)
             self.worker.failed.connect(self._transcription_failed)
+            self.worker.cleanup_warning.connect(self._cleanup_warning)
             self.worker.start()
         except Exception as exc:
             log_event(f"stop_recording failed: {repr(exc)}")
@@ -466,7 +517,10 @@ class MainWindow(QMainWindow):
         self.cleaned_text.setPlainText(cleaned_text)
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.status_label.setText("System Status: Ready")
+        if self.last_cleanup_warning:
+            self.status_label.setText(f"System Status: {self.last_cleanup_warning} Falling back to raw text.")
+        else:
+            self.status_label.setText("System Status: Ready")
         if self.worker_source == "push_to_talk":
             self._finish_push_to_talk(raw_text, cleaned_text)
 
@@ -486,6 +540,11 @@ class MainWindow(QMainWindow):
     def _show_error(self, message: str) -> None:
         self.status_label.setText(f"System Status: Error: {message}")
         QMessageBox.warning(self, "Voice Cleanup AI", message)
+
+    def _cleanup_warning(self, message: str) -> None:
+        self.last_cleanup_warning = message
+        self.status_label.setText(f"System Status: {message} Falling back to raw text.")
+        log_event(f"cleanup warning shown: {message}")
 
     def closeEvent(self, event) -> None:
         if hasattr(self, "hotkey_controller"):
@@ -558,12 +617,25 @@ class MainWindow(QMainWindow):
             executable_path=settings.whisper_exe_path,
             model_path=settings.model_path,
         )
-        cleaner = RuleBasedCleaner(settings.cleanup_prompt)
+        cleaner = self._create_cleaner(settings)
         self.worker_source = "push_to_talk"
+        self.last_cleanup_warning = ""
         self.worker = TranscriptionWorker(engine, cleaner, wav_path)
         self.worker.finished_ok.connect(self._transcription_finished)
         self.worker.failed.connect(self._transcription_failed)
+        self.worker.cleanup_warning.connect(self._cleanup_warning)
         self.worker.start()
+
+    def _create_cleaner(self, settings: AppSettings):
+        if not settings.cleanup_enabled or settings.cleanup_backend == "none":
+            log_event("cleanup backend disabled")
+            return NoOpCleaner()
+        log_event(f"cleanup backend ollama url={settings.ollama_url} model={settings.ollama_model}")
+        return OllamaCleaner(
+            base_url=settings.ollama_url,
+            model=settings.ollama_model,
+            prompt=settings.cleanup_prompt,
+        )
 
     def _finish_push_to_talk(self, raw_text: str, cleaned_text: str) -> None:
         self.push_to_talk_state = "done"

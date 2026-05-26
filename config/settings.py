@@ -22,8 +22,9 @@ else:
 DEFAULT_WHISPER_EXE_PATH = PROJECT_ROOT / "tools" / "whisper.cpp" / "whisper-cli.exe"
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "tools" / "whisper.cpp" / "models" / "ggml-base.bin"
 DEFAULT_CLEANUP_PROMPT = (
-    "Clean up this dictation. Fix punctuation, capitalization, and grammar. "
-    "Keep the original meaning. Do not add new information. Return only the cleaned text."
+    "Post-process this ASR transcript. Fix punctuation, capitalization, and grammar only. "
+    "Preserve wording, tone, slang, pronouns, and meaning. Never answer questions. "
+    "Return only the cleaned transcript."
 )
 
 
@@ -34,7 +35,7 @@ class AppSettings:
     whisper_exe_path: str = str(DEFAULT_WHISPER_EXE_PATH)
     model_path: str = str(DEFAULT_MODEL_PATH)
     cleanup_prompt: str = DEFAULT_CLEANUP_PROMPT
-    cleanup_backend: str = "ollama"
+    cleanup_backend: str = "asr_postprocess"
     cleanup_enabled: bool = True
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:1.5b"
@@ -58,6 +59,8 @@ def load_settings() -> AppSettings:
             settings.whisper_exe_path = str(DEFAULT_WHISPER_EXE_PATH)
         if not settings.model_path:
             settings.model_path = str(DEFAULT_MODEL_PATH)
+        if settings.cleanup_backend == "ollama":
+            settings.cleanup_backend = "asr_postprocess"
         return settings
     except Exception:
         return AppSettings()

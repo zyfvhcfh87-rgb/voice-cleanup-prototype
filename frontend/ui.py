@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from audio.recorder import AudioRecorder, list_input_devices, log_event
+from cleanup.asr_postprocess import ASRPostProcessor
 from cleanup.ai_cleanup import NoOpCleaner
 from cleanup.ollama_cleanup import OllamaCleaner
 from config.settings import AppSettings, load_settings, save_settings
@@ -36,7 +37,7 @@ class TranscriptionWorker(QThread):
     failed = Signal(str)
     cleanup_warning = Signal(str)
 
-    def __init__(self, engine: WhisperCppEngine, cleaner: RuleBasedCleaner, wav_path: Path) -> None:
+    def __init__(self, engine: WhisperCppEngine, cleaner, wav_path: Path) -> None:
         super().__init__()
         self.engine = engine
         self.cleaner = cleaner
@@ -242,7 +243,8 @@ class MainWindow(QMainWindow):
         self.cleanup_enabled_checkbox = QCheckBox("Enable Cleanup")
         self.cleanup_backend_combo = QComboBox()
         self.cleanup_backend_combo.addItem("None", "none")
-        self.cleanup_backend_combo.addItem("Ollama local model", "ollama")
+        self.cleanup_backend_combo.addItem("ASR postprocess", "asr_postprocess")
+        self.cleanup_backend_combo.addItem("Ollama local model", "ollama_llm")
         cleanup_row.addWidget(self.cleanup_enabled_checkbox)
         cleanup_row.addWidget(self.cleanup_backend_combo, 1)
         card3_layout.addLayout(cleanup_row)
@@ -630,12 +632,16 @@ class MainWindow(QMainWindow):
         if not settings.cleanup_enabled or settings.cleanup_backend == "none":
             log_event("cleanup backend disabled")
             return NoOpCleaner()
-        log_event(f"cleanup backend ollama url={settings.ollama_url} model={settings.ollama_model}")
-        return OllamaCleaner(
-            base_url=settings.ollama_url,
-            model=settings.ollama_model,
-            prompt=settings.cleanup_prompt,
-        )
+        if settings.cleanup_backend == "ollama_llm":
+            log_event(f"cleanup backend ollama url={settings.ollama_url} model={settings.ollama_model}")
+            return OllamaCleaner(
+                base_url=settings.ollama_url,
+                model=settings.ollama_model,
+                prompt=settings.cleanup_prompt,
+            )
+
+        log_event("cleanup backend asr_postprocess")
+        return ASRPostProcessor()
 
     def _finish_push_to_talk(self, raw_text: str, cleaned_text: str) -> None:
         self.push_to_talk_state = "done"

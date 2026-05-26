@@ -2,7 +2,7 @@
 
 A local-first Windows 11 desktop dictation app built with Python and PySide6.
 
-The app records microphone audio, transcribes it locally with `whisper.cpp`, optionally cleans the transcription with a local Ollama model, then copies or auto-pastes the final text into the active application.
+The app records microphone audio, transcribes it locally with `whisper.cpp`, cleans the transcript with a conservative ASR post-processing pipeline by default, then copies or auto-pastes the final text into the active application.
 
 ## Current Features
 
@@ -11,8 +11,9 @@ The app records microphone audio, transcribes it locally with `whisper.cpp`, opt
 - Global push-to-talk workflow
 - Small desktop microphone overlay
 - Local `whisper.cpp` transcription
-- Optional local Ollama cleanup
-- Rule/no-op fallback cleanup behavior
+- Default ASR post-processing cleanup
+- Optional advanced local Ollama cleanup
+- No-op cleanup mode
 - Clipboard copy and optional auto-paste
 - Local settings, recordings, and logs under `%LOCALAPPDATA%\VoiceCleanupPrototype`
 - PyInstaller onedir Windows build
@@ -29,6 +30,7 @@ The app records microphone audio, transcribes it locally with `whisper.cpp`, opt
 |   |-- recorder.py
 |-- cleanup/
 |   |-- ai_cleanup.py
+|   |-- asr_postprocess.py
 |   |-- ollama_cleanup.py
 |-- config/
 |   |-- settings.py
@@ -85,9 +87,34 @@ To verify whisper.cpp manually:
 
 The app runs `whisper-cli.exe` as a hidden Windows subprocess, so no terminal window should flash during transcription.
 
-## Optional Local AI Cleanup with Ollama
+## Cleanup Modes
 
-Ollama cleanup is optional and runs fully locally. It sends the raw Whisper transcription to Ollama for punctuation, capitalization, and grammar cleanup.
+The cleanup layer is designed for ASR post-processing, not chat. It should preserve wording, tone, slang, pronouns, and meaning. It should never answer questions from the transcript.
+
+Available cleanup modes:
+
+```text
+none
+asr_postprocess
+ollama_llm
+```
+
+Default mode:
+
+```text
+asr_postprocess
+```
+
+The default ASR postprocess pipeline:
+
+1. Removes obvious filler words and accidental immediate repeats.
+2. Restores light punctuation and capitalization.
+3. Preserves the original wording and meaning.
+4. Does not generate answers or add new information.
+
+## Optional Advanced Cleanup With Ollama
+
+Ollama cleanup is optional, advanced, and disabled by default. It runs locally and sends the raw Whisper transcription to Ollama for heavier cleanup when you explicitly choose the `ollama_llm` backend.
 
 Install Ollama, then pull and run the default model:
 
@@ -96,13 +123,13 @@ ollama pull qwen2.5:1.5b
 ollama run qwen2.5:1.5b
 ```
 
-Default cleanup settings:
+Ollama settings:
 
 ```text
 Cleanup backend: Ollama local model
 Ollama URL: http://localhost:11434
 Model: qwen2.5:1.5b
-Prompt: Clean up this dictation. Fix punctuation, capitalization, and grammar. Keep the original meaning. Do not add new information. Return only the cleaned text.
+Prompt: Post-process this ASR transcript. Fix punctuation, capitalization, and grammar only. Preserve wording, tone, slang, pronouns, and meaning. Never answer questions. Return only the cleaned transcript.
 ```
 
 Supported starter models:

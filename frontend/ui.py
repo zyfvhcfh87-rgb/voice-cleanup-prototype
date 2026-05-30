@@ -1,15 +1,13 @@
 from pathlib import Path
 import traceback
 
-from PySide6.QtCore import QThread, QTimer, Signal, Slot, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut, QColor
+from PySide6.QtCore import QThread, QTimer, Signal, Slot, Qt
+from PySide6.QtGui import QKeySequence, QShortcut, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -31,10 +29,10 @@ from config.settings import (
     get_whisper_model_path,
     load_settings,
     save_settings,
-    WHISPER_MODELS_DIR,
 )
 from frontend.hotkey_controller import PushToTalkHotkeyController
 from frontend.overlay import MicrophoneOverlay
+from frontend.preferences_dialog import PreferencesDialog
 from transcription.whisper_engine import WhisperCppEngine
 from frontend.styles import QSS_STYLING, TitleBar, GlassCard, SwitchToggle, SegmentedControl
 from frontend.stats_dialog import StatisticsDashboardDialog
@@ -227,8 +225,9 @@ class MainWindow(QMainWindow):
 
         card_layout.addSpacing(4)
 
-        # Advanced Settings collapsible trigger row
-        self.adv_toggle_btn = QPushButton("Advanced Settings ▸")
+        # Advanced Settings opens a separate Preferences dialog so the main
+        # window never stretches permanently.
+        self.adv_toggle_btn = QPushButton("Advanced Settings")
         self.adv_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.adv_toggle_btn.setStyleSheet("""
             QPushButton {
@@ -246,105 +245,8 @@ class MainWindow(QMainWindow):
                 color: #0056B3;
             }
         """)
-        self.adv_toggle_btn.clicked.connect(self._toggle_advanced_settings)
+        self.adv_toggle_btn.clicked.connect(self.show_preferences_dialog)
         card_layout.addWidget(self.adv_toggle_btn)
-
-        # Collapsible technical advanced container widget
-        self.adv_container = QWidget()
-        adv_sub_layout = QVBoxLayout(self.adv_container)
-        adv_sub_layout.setContentsMargins(0, 4, 0, 4)
-        adv_sub_layout.setSpacing(10)
-
-        # Show Desktop Overlay switch
-        self.overlay_enabled_switch = SwitchToggle("Show Desktop Overlay")
-        adv_sub_layout.addWidget(self.overlay_enabled_switch)
-
-        # Shortcut choice dropdown
-        shortcut_row = QHBoxLayout()
-        lbl_shortcut = QLabel("PTT Shortcut:")
-        lbl_shortcut.setStyleSheet("color: #6E6E73;")
-        self.hotkey_choice_combo = QComboBox()
-        self.hotkey_choice_combo.addItem("Ctrl + Windows", "ctrl_win")
-        self.hotkey_choice_combo.addItem("Ctrl + Alt", "ctrl_alt")
-        self.hotkey_choice_combo.addItem("Ctrl + Shift + Space", "ctrl_shift_space")
-        shortcut_row.addWidget(lbl_shortcut)
-        shortcut_row.addWidget(self.hotkey_choice_combo, 1)
-        adv_sub_layout.addLayout(shortcut_row)
-
-        # Speech Engine path
-        exe_row = QHBoxLayout()
-        lbl_exe = QLabel("Speech Engine:")
-        lbl_exe.setStyleSheet("color: #6E6E73;")
-        self.whisper_exe_edit = QLineEdit()
-        self.whisper_exe_edit.setPlaceholderText("Path to whisper-cli.exe")
-        whisper_exe_button = QPushButton("Browse")
-        whisper_exe_button.setObjectName("BrowseBtn")
-        whisper_exe_button.setFixedHeight(26)
-        whisper_exe_button.clicked.connect(self._choose_whisper_exe)
-        exe_row.addWidget(lbl_exe)
-        exe_row.addWidget(self.whisper_exe_edit, 1)
-        exe_row.addWidget(whisper_exe_button)
-        adv_sub_layout.addLayout(exe_row)
-
-        # Model file
-        model_row2 = QHBoxLayout()
-        lbl_path = QLabel("Model File:")
-        lbl_path.setStyleSheet("color: #6E6E73;")
-        self.model_path_edit = QLineEdit()
-        self.model_path_edit.setReadOnly(True)
-        model_folder_button = QPushButton("Folder")
-        model_folder_button.setObjectName("BrowseBtn")
-        model_folder_button.setFixedHeight(26)
-        model_folder_button.clicked.connect(self._open_models_folder)
-        model_row2.addWidget(lbl_path)
-        model_row2.addWidget(self.model_path_edit, 1)
-        model_row2.addWidget(model_folder_button)
-        adv_sub_layout.addLayout(model_row2)
-
-        # Cleanup Style backend selector
-        cleanup_backend_row = QHBoxLayout()
-        lbl_cleanup_backend = QLabel("Cleanup Style:")
-        lbl_cleanup_backend.setStyleSheet("color: #6E6E73;")
-        self.cleanup_backend_combo = QComboBox()
-        self.cleanup_backend_combo.addItem("None", "none")
-        self.cleanup_backend_combo.addItem("Smart Cleanup", "asr_postprocess")
-        self.cleanup_backend_combo.addItem("AI Rewrite Cleanup", "ollama_llm")
-        cleanup_backend_row.addWidget(lbl_cleanup_backend)
-        cleanup_backend_row.addWidget(self.cleanup_backend_combo, 1)
-        adv_sub_layout.addLayout(cleanup_backend_row)
-
-        # AI Server URL
-        ollama_url_row = QHBoxLayout()
-        lbl_ollama_url = QLabel("AI Server URL:")
-        lbl_ollama_url.setStyleSheet("color: #6E6E73;")
-        self.ollama_url_edit = QLineEdit()
-        self.ollama_url_edit.setPlaceholderText("http://localhost:11434")
-        ollama_url_row.addWidget(lbl_ollama_url)
-        ollama_url_row.addWidget(self.ollama_url_edit, 1)
-        adv_sub_layout.addLayout(ollama_url_row)
-
-        # AI Model dropdown
-        ollama_model_row = QHBoxLayout()
-        lbl_ollama_model = QLabel("AI Model:")
-        lbl_ollama_model.setStyleSheet("color: #6E6E73;")
-        self.ollama_model_combo = QComboBox()
-        self.ollama_model_combo.setEditable(True)
-        self.ollama_model_combo.addItems(["qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:3b"])
-        ollama_model_row.addWidget(lbl_ollama_model)
-        ollama_model_row.addWidget(self.ollama_model_combo, 1)
-        adv_sub_layout.addLayout(ollama_model_row)
-
-        # Smart Cleanup Advanced Instructions
-        lbl_adv_prompt = QLabel("Smart Cleanup Instructions:")
-        lbl_adv_prompt.setStyleSheet("color: #6E6E73; font-weight: bold;")
-        self.cleanup_prompt_edit = QPlainTextEdit()
-        self.cleanup_prompt_edit.setPlaceholderText("Advanced cleanup instructions...")
-        self.cleanup_prompt_edit.setFixedHeight(64)
-        adv_sub_layout.addWidget(lbl_adv_prompt)
-        adv_sub_layout.addWidget(self.cleanup_prompt_edit)
-
-        self.adv_container.setVisible(False)
-        card_layout.addWidget(self.adv_container)
 
         # Save Settings button at the bottom of settings card
         self.save_settings_btn = QPushButton("Save Settings")
@@ -437,7 +339,7 @@ class MainWindow(QMainWindow):
 
         settings_button = QPushButton("Settings")
         settings_button.setFixedHeight(34)
-        settings_button.clicked.connect(self._toggle_advanced_settings)
+        settings_button.clicked.connect(self.show_preferences_dialog)
 
         stats_button = QPushButton("Stats")
         stats_button.setFixedHeight(34)
@@ -463,44 +365,26 @@ class MainWindow(QMainWindow):
 
     def _load_settings_into_ui(self) -> None:
         self.model_size_segmented.set_value(self.settings.model_size)
-        self.whisper_exe_edit.setText(self.settings.whisper_exe_path)
         self._model_selection_changed()
-        
-        self.cleanup_prompt_edit.setPlainText(self.settings.cleanup_prompt)
         self.cleanup_enabled_switch.setChecked(self.settings.cleanup_enabled)
-        
-        cleanup_index = self.cleanup_backend_combo.findData(self.settings.cleanup_backend)
-        self.cleanup_backend_combo.setCurrentIndex(cleanup_index if cleanup_index >= 0 else 1)
-        
-        self.ollama_url_edit.setText(self.settings.ollama_url)
-        ollama_model_index = self.ollama_model_combo.findText(self.settings.ollama_model)
-        if ollama_model_index >= 0:
-            self.ollama_model_combo.setCurrentIndex(ollama_model_index)
-        else:
-            self.ollama_model_combo.setEditText(self.settings.ollama_model)
-            
         self.enable_ptt_switch.setChecked(self.settings.enable_global_push_to_talk)
         self.enable_auto_paste_switch.setChecked(self.settings.enable_auto_paste)
-        self.overlay_enabled_switch.setChecked(self.settings.overlay_enabled)
-        
-        index = self.hotkey_choice_combo.findData(self.settings.hotkey_choice)
-        self.hotkey_choice_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _settings_from_ui(self) -> AppSettings:
         return AppSettings(
             microphone_name=self.microphone_combo.currentText(),
             model_size=self.model_size_segmented.currentData(),
-            whisper_exe_path=self.whisper_exe_edit.text().strip(),
+            whisper_exe_path=self.settings.whisper_exe_path,
             model_path=str(get_whisper_model_path(self.model_size_segmented.currentData())),
-            cleanup_prompt=self.cleanup_prompt_edit.toPlainText().strip(),
-            cleanup_backend=self.cleanup_backend_combo.currentData(),
+            cleanup_prompt=self.settings.cleanup_prompt,
+            cleanup_backend=self.settings.cleanup_backend,
             cleanup_enabled=self.cleanup_enabled_switch.isChecked(),
-            ollama_url=self.ollama_url_edit.text().strip() or "http://localhost:11434",
-            ollama_model=self.ollama_model_combo.currentText().strip() or "qwen2.5:1.5b",
+            ollama_url=self.settings.ollama_url,
+            ollama_model=self.settings.ollama_model,
             enable_global_push_to_talk=self.enable_ptt_switch.isChecked(),
             enable_auto_paste=self.enable_auto_paste_switch.isChecked(),
-            overlay_enabled=self.overlay_enabled_switch.isChecked(),
-            hotkey_choice=self.hotkey_choice_combo.currentData(),
+            overlay_enabled=self.settings.overlay_enabled,
+            hotkey_choice=self.settings.hotkey_choice,
         )
 
     def _save_settings_from_ui(self, apply_hotkey_settings: bool = True) -> None:
@@ -510,10 +394,15 @@ class MainWindow(QMainWindow):
             self._apply_push_to_talk_settings()
         self.set_app_status("idle", "Settings saved")
 
-    def _toggle_advanced_settings(self) -> None:
-        visible = not self.adv_container.isVisible()
-        self.adv_container.setVisible(visible)
-        self.adv_toggle_btn.setText("Advanced Settings ▾" if visible else "Advanced Settings ▸")
+    def show_preferences_dialog(self) -> None:
+        current_settings = self._settings_from_ui()
+        dialog = PreferencesDialog(current_settings, self)
+        if dialog.exec() == PreferencesDialog.DialogCode.Accepted:
+            self.settings = dialog.settings
+            save_settings(self.settings)
+            self._load_settings_into_ui()
+            self._apply_push_to_talk_settings()
+            self.set_app_status("idle", "Settings saved")
 
     def _record_dictation_stats(self, raw_text: str, cleaned_text: str) -> None:
         stats_text = cleaned_text.strip() or raw_text.strip()
@@ -547,21 +436,11 @@ class MainWindow(QMainWindow):
         if self.microphone_combo.count() == 0:
             self.set_app_status("idle", "No microphone devices found")
 
-    def _choose_whisper_exe(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Choose whisper.cpp executable", "", "Executable (*.exe);;All files (*)")
-        if path:
-            self.whisper_exe_edit.setText(path)
-
-    def _open_models_folder(self) -> None:
-        WHISPER_MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(WHISPER_MODELS_DIR)))
-
     def _model_selection_changed(self) -> None:
         model_size = self.model_size_segmented.currentData() or "base"
         model_path = get_whisper_model_path(model_size)
         model_info = get_whisper_model_info(model_size)
         installed_text = "Installed" if model_path.is_file() else "Missing"
-        self.model_path_edit.setText(str(model_path))
         self.model_status_label.setText(
             f"{model_info['label']}: {model_info['description']} ({model_info['size']}) - {installed_text}"
         )

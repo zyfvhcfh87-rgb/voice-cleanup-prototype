@@ -294,7 +294,7 @@ class StatisticsDashboardDialog(QDialog):
             }
         """)
         
-        lbl_ts_today = QLabel("today 🕒")
+        lbl_ts_today = QLabel("today")
         lbl_ts_today.setStyleSheet("""
             QLabel {
                 font-family: 'Segoe UI', -apple-system, sans-serif;

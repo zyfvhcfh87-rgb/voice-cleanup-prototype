@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt, QPoint, QRectF, QPointF, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QBrush, QFont
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QWidget,
     QHBoxLayout,
     QVBoxLayout,
@@ -260,6 +261,8 @@ class SegmentedControl(QWidget):
         super().__init__(parent)
         self.items = items
         self.selected_value = items[0][1]
+        self.setFixedHeight(42)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         
         self.setObjectName("SegmentedControl")
         self.setStyleSheet("""
@@ -301,7 +304,7 @@ class SegmentedControl(QWidget):
                         border-radius: 6px;
                         font-weight: 600;
                         padding: 4px 10px;
-                        min-height: 24px;
+                        min-height: 32px;
                     }
                 """)
                 # Dynamic soft shadow on selection
@@ -320,7 +323,7 @@ class SegmentedControl(QWidget):
                         border-radius: 6px;
                         font-weight: 500;
                         padding: 4px 10px;
-                        min-height: 24px;
+                        min-height: 32px;
                     }
                     QPushButton:hover {
                         color: #1D1D1F;
@@ -406,6 +409,48 @@ class SwitchToggle(QCheckBox):
             )
 
 
+class TrafficLightButton(QAbstractButton):
+    """
+    Tiny custom-painted macOS traffic-light control.
+
+    It deliberately avoids QPushButton styling so the app-wide button padding
+    cannot stretch the circles into vertical bars.
+    """
+    def __init__(self, base_color: str, hover_color: str, pressed_color: str, symbol: str, parent=None):
+        super().__init__(parent)
+        self.base_color = QColor(base_color)
+        self.hover_color = QColor(hover_color)
+        self.pressed_color = QColor(pressed_color)
+        self.symbol = symbol
+        self.setFixedSize(14, 14)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Close" if symbol == "x" else "Minimize")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        color = self.base_color
+        if self.isDown():
+            color = self.pressed_color
+        elif self.underMouse():
+            color = self.hover_color
+
+        painter.setPen(QPen(QColor(0, 0, 0, 35), 0.7))
+        painter.setBrush(QBrush(color))
+        painter.drawEllipse(QRectF(1, 1, 12, 12))
+
+        if self.underMouse() or self.isDown():
+            symbol_pen = QPen(QColor(80, 40, 35, 160), 1.4)
+            symbol_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(symbol_pen)
+            if self.symbol == "x":
+                painter.drawLine(QPointF(5.0, 5.0), QPointF(9.0, 9.0))
+                painter.drawLine(QPointF(9.0, 5.0), QPointF(5.0, 9.0))
+            else:
+                painter.drawLine(QPointF(4.5, 7.0), QPointF(9.5, 7.0))
+
+
 class TitleBar(QWidget):
     """
     macOS Utility inspired TitleBar featuring Traffic Light window controls
@@ -434,35 +479,11 @@ class TitleBar(QWidget):
         lights_layout.setContentsMargins(0, 0, 0, 0)
         lights_layout.setSpacing(8)
         
-        # Close Light (Red #FF5F56)
-        self.close_btn = QPushButton()
-        self.close_btn.setFixedSize(12, 12)
-        self.close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FF5F56;
-                border: none;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #E0433C;
-            }
-        """)
+        self.close_btn = TrafficLightButton("#FF5F57", "#E0443E", "#BF3630", "x")
         self.close_btn.clicked.connect(self.parent.close)
         lights_layout.addWidget(self.close_btn)
         
-        # Minimize Light (Yellow #FFBD2E)
-        self.min_btn = QPushButton()
-        self.min_btn.setFixedSize(12, 12)
-        self.min_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FFBD2E;
-                border: none;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #DCA123;
-            }
-        """)
+        self.min_btn = TrafficLightButton("#FFBD2E", "#E0A526", "#B8861F", "-")
         self.min_btn.clicked.connect(self.parent.showMinimized)
         lights_layout.addWidget(self.min_btn)
         

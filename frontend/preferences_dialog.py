@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 )
 
 from config.settings import AppSettings, WHISPER_MODELS_DIR, get_whisper_model_path
-from frontend.styles import SwitchToggle
 
 
 class PreferencesDialog(QDialog):
@@ -54,8 +53,14 @@ class PreferencesDialog(QDialog):
         layout.setContentsMargins(0, 4, 4, 4)
         layout.setSpacing(14)
 
-        self.overlay_enabled_switch = SwitchToggle("Show Desktop Overlay")
-        layout.addWidget(self.overlay_enabled_switch)
+        overlay_row = QHBoxLayout()
+        overlay_row.addWidget(self._label("Desktop Overlay"))
+        self.overlay_visibility_combo = QComboBox()
+        self.overlay_visibility_combo.addItem("Always show", "always")
+        self.overlay_visibility_combo.addItem("Only while active", "active")
+        self.overlay_visibility_combo.addItem("Never show", "never")
+        overlay_row.addWidget(self.overlay_visibility_combo, 1)
+        layout.addLayout(overlay_row)
 
         shortcut_row = QHBoxLayout()
         shortcut_row.addWidget(self._label("Push-to-Talk Shortcut"))
@@ -168,7 +173,8 @@ class PreferencesDialog(QDialog):
         return label
 
     def _load_settings(self) -> None:
-        self.overlay_enabled_switch.setChecked(self.settings.overlay_enabled)
+        overlay_index = self.overlay_visibility_combo.findData(self.settings.overlay_visibility_mode)
+        self.overlay_visibility_combo.setCurrentIndex(overlay_index if overlay_index >= 0 else 1)
         index = self.hotkey_choice_combo.findData(self.settings.hotkey_choice)
         self.hotkey_choice_combo.setCurrentIndex(index if index >= 0 else 0)
 
@@ -196,7 +202,7 @@ class PreferencesDialog(QDialog):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(WHISPER_MODELS_DIR)))
 
     def _save_and_accept(self) -> None:
-        self.settings.overlay_enabled = self.overlay_enabled_switch.isChecked()
+        self.settings.overlay_visibility_mode = self.overlay_visibility_combo.currentData()
         self.settings.hotkey_choice = self.hotkey_choice_combo.currentData()
         self.settings.whisper_exe_path = self.whisper_exe_edit.text().strip()
         self.settings.model_path = str(get_whisper_model_path(self.settings.model_size))

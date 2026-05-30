@@ -13,6 +13,10 @@ class MicrophoneOverlay(QWidget):
         "idle": QColor("#8E8E93"),          # Disabled/Idle gray
         "recording": QColor("#34C759"),     # Success/Ready green
         "processing": QColor("#007AFF"),    # Accent/Processing blue
+        "stopping": QColor("#007AFF"),
+        "transcribing": QColor("#007AFF"),
+        "cleaning": QColor("#007AFF"),
+        "inserting": QColor("#007AFF"),
         "error": QColor("#FF3B30"),         # Error red
         "done": QColor("#34C759"),          # Handled same as idle/success
     }
@@ -44,7 +48,8 @@ class MicrophoneOverlay(QWidget):
 
     def set_state(self, state: str) -> None:
         """
-        Transition between overlay states: idle, recording, processing, error, done.
+        Transition between overlay states such as idle, recording,
+        processing, transcribing, cleaning, inserting, error, and done.
         """
         if state == "done":
             state = "idle"
@@ -57,7 +62,7 @@ class MicrophoneOverlay(QWidget):
         self.update()
 
     def _update_animation(self) -> None:
-        if self.current_state == "processing":
+        if self.current_state in ("processing", "stopping", "transcribing", "cleaning", "inserting"):
             self.pulse_phase += 0.04  # Rotate progress arc
         elif self.current_state == "recording":
             self.pulse_phase += 0.02  # Outer glow pulse
@@ -94,7 +99,7 @@ class MicrophoneOverlay(QWidget):
             painter.setBrush(QBrush(glow_color))
             painter.drawEllipse(QPointF(center_x, center_y), pulse_r, pulse_r)
             
-        elif self.current_state == "processing":
+        elif self.current_state in ("processing", "stopping", "transcribing", "cleaning", "inserting"):
             # Spinning blue progress ring around the circle
             ring_pen = QPen(state_color)
             ring_pen.setWidthF(3.0)
@@ -180,13 +185,21 @@ class MicrophoneOverlay(QWidget):
         label_text = "Idle"
         if self.current_state == "recording":
             label_text = "Listening"
+        elif self.current_state == "stopping":
+            label_text = "Stopping"
+        elif self.current_state == "transcribing":
+            label_text = "Transcribing"
         elif self.current_state == "processing":
             label_text = "Processing"
+        elif self.current_state == "cleaning":
+            label_text = "Cleaning"
+        elif self.current_state == "inserting":
+            label_text = "Inserting"
         elif self.current_state == "error":
             label_text = "Error"
 
         # Capsule dimensions
-        lbl_w = 72.0
+        lbl_w = max(72.0, len(label_text) * 7.0 + 18.0)
         lbl_h = 18.0
         lbl_x = center_x - lbl_w / 2.0
         lbl_y = 80.0  # Spaced nicely below the circle

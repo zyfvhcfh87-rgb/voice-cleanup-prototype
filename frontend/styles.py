@@ -197,7 +197,7 @@ class StatusPill(QWidget):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(90, 26)
+        self.setFixedSize(118, 26)
         self.status_state = "idle"
         self.status_text = "Ready"
 
@@ -209,6 +209,14 @@ class StatusPill(QWidget):
             self.status_text = "Listening"
         elif state == "processing":
             self.status_text = "Processing"
+        elif state == "stopping":
+            self.status_text = "Finalizing"
+        elif state == "transcribing":
+            self.status_text = "Transcribing"
+        elif state == "cleaning":
+            self.status_text = "Cleaning"
+        elif state == "inserting":
+            self.status_text = "Inserting"
         elif state == "error":
             self.status_text = "Error"
         self.update()
@@ -227,7 +235,7 @@ class StatusPill(QWidget):
             dot_color = QColor("#34C759")      # Green
         elif self.status_state == "recording":
             dot_color = QColor("#34C759")      # Green for active mic
-        elif self.status_state == "processing":
+        elif self.status_state in ("processing", "stopping", "transcribing", "cleaning", "inserting"):
             dot_color = QColor("#007AFF")      # Blue
         elif self.status_state == "error":
             dot_color = QColor("#FF3B30")      # Red

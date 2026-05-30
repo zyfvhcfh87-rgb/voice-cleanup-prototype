@@ -24,23 +24,23 @@ WHISPER_MODELS_DIR = PROJECT_ROOT / "tools" / "whisper.cpp" / "models"
 
 WHISPER_MODELS = {
     "base": {
-        "label": "Base",
+        "label": "Fast",
         "filename": "ggml-base.bin",
-        "description": "Fast, lower accuracy",
+        "description": "quickest, lower accuracy",
         "size": "~142 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
     },
     "small": {
-        "label": "Small",
+        "label": "Balanced",
         "filename": "ggml-small.bin",
-        "description": "Balanced",
+        "description": "good accuracy and speed",
         "size": "~466 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
     },
     "medium": {
-        "label": "Medium",
+        "label": "Accurate",
         "filename": "ggml-medium.bin",
-        "description": "Slower, higher accuracy",
+        "description": "slower, best accuracy",
         "size": "~1.5 GB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
     },

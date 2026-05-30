@@ -25,6 +25,7 @@ from audio.recorder import AudioRecorder, list_input_devices, log_event
 from cleanup.asr_postprocess import ASRPostProcessor
 from cleanup.ai_cleanup import NoOpCleaner
 from cleanup.ollama_cleanup import OllamaCleaner
+from config.dictation_stats import load_today_stats, record_dictation_session
 from config.settings import (
     AppSettings,
     WHISPER_MODELS,
@@ -97,6 +98,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.setStyleSheet(QSS_STYLING)
         self._load_settings_into_ui()
+        self._refresh_stats_display()
         self._refresh_microphones()
         self.overlay = MicrophoneOverlay()
         self.hotkey_controller = PushToTalkHotkeyController()
@@ -158,9 +160,9 @@ class MainWindow(QMainWindow):
         card1_layout.setContentsMargins(16, 14, 16, 14)
         card1_layout.setSpacing(10)
 
-        lbl1_title = QLabel("Audio & Model Setup")
+        lbl1_title = QLabel("Audio & Transcription")
         lbl1_title.setProperty("class", "CardHeader")
-        lbl1_sub = QLabel("Select active input and transcription model size.")
+        lbl1_sub = QLabel("Choose your microphone and transcription quality.")
         lbl1_sub.setProperty("class", "CardSubHeader")
         card1_layout.addWidget(lbl1_title)
         card1_layout.addWidget(lbl1_sub)
@@ -178,8 +180,8 @@ class MainWindow(QMainWindow):
         card1_layout.addLayout(mic_row)
 
         model_row = QHBoxLayout()
-        lbl_model = QLabel("Model Size:")
-        lbl_model.setFixedWidth(75)
+        lbl_model = QLabel("Transcription Quality:")
+        lbl_model.setFixedWidth(135)
         self.model_size_combo = QComboBox()
         for model_key, model_info in WHISPER_MODELS.items():
             self.model_size_combo.addItem(model_info["label"], model_key)
@@ -195,21 +197,33 @@ class MainWindow(QMainWindow):
         
         settings_layout.addWidget(card1)
 
-        # Card 2: System Boundaries
+        # Card 2: Advanced Settings
         card2 = GlassCard()
         card2_layout = QVBoxLayout(card2)
         card2_layout.setContentsMargins(16, 14, 16, 14)
         card2_layout.setSpacing(10)
 
-        lbl2_title = QLabel("System Boundaries")
+        self.advanced_settings_button = QPushButton("Advanced Settings")
+        self.advanced_settings_button.setCheckable(True)
+        self.advanced_settings_button.setChecked(False)
+        self.advanced_settings_button.clicked.connect(self._toggle_advanced_settings)
+        card2_layout.addWidget(self.advanced_settings_button)
+
+        self.advanced_settings_body = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_settings_body)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(10)
+        self.advanced_settings_body.setVisible(False)
+
+        lbl2_title = QLabel("Local Engine Settings")
         lbl2_title.setProperty("class", "CardHeader")
-        lbl2_sub = QLabel("Configure path boundaries for local AI execution.")
+        lbl2_sub = QLabel("Optional paths and advanced cleanup settings.")
         lbl2_sub.setProperty("class", "CardSubHeader")
-        card2_layout.addWidget(lbl2_title)
-        card2_layout.addWidget(lbl2_sub)
+        advanced_layout.addWidget(lbl2_title)
+        advanced_layout.addWidget(lbl2_sub)
 
         exe_row = QHBoxLayout()
-        lbl_exe = QLabel("whisper.cpp:")
+        lbl_exe = QLabel("Speech engine:")
         lbl_exe.setFixedWidth(80)
         self.whisper_exe_edit = QLineEdit()
         self.whisper_exe_edit.setPlaceholderText("Path to main.exe or whisper-cli.exe")
@@ -219,10 +233,10 @@ class MainWindow(QMainWindow):
         exe_row.addWidget(lbl_exe)
         exe_row.addWidget(self.whisper_exe_edit, 1)
         exe_row.addWidget(whisper_exe_button)
-        card2_layout.addLayout(exe_row)
+        advanced_layout.addLayout(exe_row)
 
         model_row2 = QHBoxLayout()
-        lbl_path = QLabel("Model File:")
+        lbl_path = QLabel("Model file:")
         lbl_path.setFixedWidth(80)
         self.model_path_edit = QLineEdit()
         self.model_path_edit.setPlaceholderText("Path to ggml-base.bin")
@@ -233,58 +247,66 @@ class MainWindow(QMainWindow):
         model_row2.addWidget(lbl_path)
         model_row2.addWidget(self.model_path_edit, 1)
         model_row2.addWidget(model_button)
-        card2_layout.addLayout(model_row2)
-
-        settings_layout.addWidget(card2)
-
-        # Card 3: AI Cleanup Prompt & Shortcuts Options
-        card3 = GlassCard()
-        card3_layout = QVBoxLayout(card3)
-        card3_layout.setContentsMargins(16, 14, 16, 14)
-        card3_layout.setSpacing(10)
-
-        lbl3_title = QLabel("AI & Behavioral Parameters")
-        lbl3_title.setProperty("class", "CardHeader")
-        lbl3_sub = QLabel("Configure instructions, global hotkeys, and triggers.")
-        lbl3_sub.setProperty("class", "CardSubHeader")
-        card3_layout.addWidget(lbl3_title)
-        card3_layout.addWidget(lbl3_sub)
+        advanced_layout.addLayout(model_row2)
 
         self.cleanup_prompt_edit = QPlainTextEdit()
-        self.cleanup_prompt_edit.setPlaceholderText("Enter AI cleanup instruction prompt...")
+        self.cleanup_prompt_edit.setPlaceholderText("Advanced cleanup instructions...")
         self.cleanup_prompt_edit.setFixedHeight(75)
-        card3_layout.addWidget(self.cleanup_prompt_edit)
+        advanced_layout.addWidget(self.cleanup_prompt_edit)
 
-        cleanup_row = QHBoxLayout()
-        self.cleanup_enabled_checkbox = QCheckBox("Enable Cleanup")
+        cleanup_backend_row = QHBoxLayout()
+        lbl_cleanup_backend = QLabel("Cleanup style:")
         self.cleanup_backend_combo = QComboBox()
         self.cleanup_backend_combo.addItem("None", "none")
-        self.cleanup_backend_combo.addItem("ASR postprocess", "asr_postprocess")
-        self.cleanup_backend_combo.addItem("Ollama local model", "ollama_llm")
-        cleanup_row.addWidget(self.cleanup_enabled_checkbox)
-        cleanup_row.addWidget(self.cleanup_backend_combo, 1)
-        card3_layout.addLayout(cleanup_row)
+        self.cleanup_backend_combo.addItem("Smart Cleanup", "asr_postprocess")
+        self.cleanup_backend_combo.addItem("AI Rewrite Cleanup", "ollama_llm")
+        cleanup_backend_row.addWidget(lbl_cleanup_backend)
+        cleanup_backend_row.addWidget(self.cleanup_backend_combo, 1)
+        advanced_layout.addLayout(cleanup_backend_row)
 
         ollama_url_row = QHBoxLayout()
-        lbl_ollama_url = QLabel("Ollama URL:")
+        lbl_ollama_url = QLabel("AI server:")
         self.ollama_url_edit = QLineEdit()
         self.ollama_url_edit.setPlaceholderText("http://localhost:11434")
         ollama_url_row.addWidget(lbl_ollama_url)
         ollama_url_row.addWidget(self.ollama_url_edit, 1)
-        card3_layout.addLayout(ollama_url_row)
+        advanced_layout.addLayout(ollama_url_row)
 
         ollama_model_row = QHBoxLayout()
-        lbl_ollama_model = QLabel("Ollama Model:")
+        lbl_ollama_model = QLabel("AI model:")
         self.ollama_model_combo = QComboBox()
         self.ollama_model_combo.setEditable(True)
         self.ollama_model_combo.addItems(["qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:3b"])
         ollama_model_row.addWidget(lbl_ollama_model)
         ollama_model_row.addWidget(self.ollama_model_combo, 1)
-        card3_layout.addLayout(ollama_model_row)
+        advanced_layout.addLayout(ollama_model_row)
+
+        card2_layout.addWidget(self.advanced_settings_body)
+
+        settings_layout.addWidget(card2)
+
+        # Card 3: Dictation Behavior
+        card3 = GlassCard()
+        card3_layout = QVBoxLayout(card3)
+        card3_layout.setContentsMargins(16, 14, 16, 14)
+        card3_layout.setSpacing(10)
+
+        lbl3_title = QLabel("Dictation Behavior")
+        lbl3_title.setProperty("class", "CardHeader")
+        lbl3_sub = QLabel("Choose what happens after you speak.")
+        lbl3_sub.setProperty("class", "CardSubHeader")
+        card3_layout.addWidget(lbl3_title)
+        card3_layout.addWidget(lbl3_sub)
+
+        cleanup_row = QHBoxLayout()
+        self.cleanup_enabled_checkbox = QCheckBox("Clean up dictation")
+        cleanup_row.addWidget(self.cleanup_enabled_checkbox)
+        cleanup_row.addStretch()
+        card3_layout.addLayout(cleanup_row)
 
         chk_grid = QGridLayout()
-        self.enable_ptt_checkbox = QCheckBox("Enable Global PTT")
-        self.enable_auto_paste_checkbox = QCheckBox("Auto-Paste Text")
+        self.enable_ptt_checkbox = QCheckBox("Push-to-talk")
+        self.enable_auto_paste_checkbox = QCheckBox("Paste after dictation")
         self.overlay_enabled_checkbox = QCheckBox("Show Overlay")
         chk_grid.addWidget(self.enable_ptt_checkbox, 0, 0)
         chk_grid.addWidget(self.enable_auto_paste_checkbox, 0, 1)
@@ -292,7 +314,7 @@ class MainWindow(QMainWindow):
         card3_layout.addLayout(chk_grid)
 
         hotkey_row = QHBoxLayout()
-        lbl_hotkey = QLabel("PTT Hotkey:")
+        lbl_hotkey = QLabel("Shortcut:")
         self.hotkey_choice_combo = QComboBox()
         self.hotkey_choice_combo.addItem("Ctrl + Windows", "ctrl_win")
         self.hotkey_choice_combo.addItem("Ctrl + Alt", "ctrl_alt")
@@ -331,6 +353,25 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.start_button, 1)
         controls_layout.addWidget(self.stop_button, 1)
         workspace_layout.addWidget(controls_card)
+
+        stats_card = GlassCard()
+        stats_layout = QVBoxLayout(stats_card)
+        stats_layout.setContentsMargins(14, 12, 14, 12)
+        stats_layout.setSpacing(6)
+
+        lbl_stats = QLabel("Today's Dictation")
+        lbl_stats.setProperty("class", "CardHeader")
+        stats_layout.addWidget(lbl_stats)
+
+        stats_values = QHBoxLayout()
+        self.stats_sessions_label = QLabel("Sessions: 0")
+        self.stats_words_label = QLabel("Words: 0")
+        self.stats_time_label = QLabel("Time saved: ~0 min")
+        stats_values.addWidget(self.stats_sessions_label)
+        stats_values.addWidget(self.stats_words_label)
+        stats_values.addWidget(self.stats_time_label)
+        stats_layout.addLayout(stats_values)
+        workspace_layout.addWidget(stats_card)
 
         # Raw Transcription Card
         raw_card = GlassCard()
@@ -426,6 +467,24 @@ class MainWindow(QMainWindow):
         if apply_hotkey_settings and hasattr(self, "hotkey_controller"):
             self._apply_push_to_talk_settings()
         self.status_label.setText("System Status: Settings saved")
+
+    def _toggle_advanced_settings(self) -> None:
+        expanded = self.advanced_settings_button.isChecked()
+        self.advanced_settings_body.setVisible(expanded)
+        self.advanced_settings_button.setText("Advanced Settings" if not expanded else "Advanced Settings - Hide")
+
+    def _refresh_stats_display(self) -> None:
+        stats = load_today_stats()
+        self.stats_sessions_label.setText(f"Sessions: {stats.sessions}")
+        self.stats_words_label.setText(f"Words: {stats.words}")
+        self.stats_time_label.setText(f"Time saved: ~{stats.minutes_saved} min")
+
+    def _record_dictation_stats(self, raw_text: str, cleaned_text: str) -> None:
+        stats_text = cleaned_text.strip() or raw_text.strip()
+        if not stats_text:
+            return
+        record_dictation_session(stats_text)
+        self._refresh_stats_display()
 
     def _refresh_microphones(self) -> None:
         current = self.settings.microphone_name
@@ -547,6 +606,7 @@ class MainWindow(QMainWindow):
     def _transcription_finished(self, raw_text: str, cleaned_text: str) -> None:
         self.raw_text.setPlainText(raw_text)
         self.cleaned_text.setPlainText(cleaned_text)
+        self._record_dictation_stats(raw_text, cleaned_text)
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         if self.last_cleanup_warning:

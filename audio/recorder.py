@@ -44,6 +44,14 @@ def log_event(message: str) -> None:
         print(f"[recording-log-failed] {exc}")
 
 
+def get_wav_duration_seconds(wav_path: Path) -> float:
+    with wave.open(str(wav_path), "rb") as wav_file:
+        frame_rate = wav_file.getframerate()
+        if frame_rate <= 0:
+            return 0.0
+        return round(wav_file.getnframes() / frame_rate, 3)
+
+
 def list_input_devices() -> list[AudioDevice]:
     devices: list[AudioDevice] = []
     try:

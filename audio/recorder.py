@@ -63,6 +63,8 @@ class AudioRecorder:
         self.stream: sd.InputStream | None = None
         self.frames: list[np.ndarray] = []
         self.is_recording = False
+        self.start_time = None
+        self.last_duration = 0.0
 
     def start(self, device_index: int | None = None) -> None:
         if self.is_recording:
@@ -78,6 +80,7 @@ class AudioRecorder:
         log_event(f"selected_device_name={device_name}")
 
         self.frames = []
+        self.start_time = datetime.now()
         try:
             log_event("creating sounddevice.InputStream")
             self.stream = sd.InputStream(
@@ -94,13 +97,14 @@ class AudioRecorder:
         except Exception as exc:
             self.stream = None
             self.is_recording = False
+            self.start_time = None
             log_event(f"microphone open/start failed: {repr(exc)}")
             raise MicrophoneAccessError(
                 "Microphone access failed while opening the selected input device. "
                 "Check Windows microphone privacy settings, close other apps using the microphone, "
                 f"or try another input device. Device index={device_index}, name={device_name}. "
                 f"Original error: {exc}"
-            ) from exc
+                ) from exc
 
     def stop(self) -> Path:
         if not self.is_recording or self.stream is None:
@@ -110,6 +114,11 @@ class AudioRecorder:
         self.stream.close()
         self.stream = None
         self.is_recording = False
+
+        if self.start_time:
+            self.last_duration = (datetime.now() - self.start_time).total_seconds()
+        else:
+            self.last_duration = 0.0
 
         if not self.frames:
             raise RuntimeError("No audio was recorded.")

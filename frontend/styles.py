@@ -1,160 +1,75 @@
-from PySide6.QtCore import Qt, QPoint
-from PySide6.QtGui import QColor, QMouseEvent
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QGraphicsDropShadowEffect
+from PySide6.QtCore import Qt, QPoint, QRectF, QPointF, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QBrush, QFont
+from PySide6.QtWidgets import (
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QGraphicsDropShadowEffect,
+    QCheckBox,
+    QFrame,
+)
 
-# Brand Identity QSS Stylesheet
+# Minimal macOS-inspired Light Theme (Google Stitch UI Design)
 QSS_STYLING = """
-/* Custom QSS Theme */
+/* Main Window Backplate */
 QMainWindow {
-    background-color: #F9F6F8;
+    background-color: #F5F5F7;
 }
 
 QWidget#CentralWidget {
-    background-color: #F9F6F8;
-}
-
-/* GlassCard Container */
-.GlassCard {
-    background-color: rgba(255, 255, 255, 0.68);
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    background-color: #F5F5F7;
+    border: 1px solid #E5E5E7;
     border-radius: 16px;
 }
 
-/* Input Card Labels */
+/* White Cards with soft borders */
+.GlassCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E5E7;
+    border-radius: 12px;
+}
+
+/* General Typography */
 QLabel {
-    color: #222222;
-    font-family: 'Segoe UI', -apple-system, Roboto, sans-serif;
+    color: #1D1D1F;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 13px;
 }
 
 .CardHeader {
     font-size: 14px;
     font-weight: 700;
-    color: #222222;
+    color: #1D1D1F;
 }
 
 .CardSubHeader {
     font-size: 11px;
-    color: #666666;
+    color: #6E6E73;
 }
 
-/* Main Buttons (Pill shape) */
-QPushButton {
-    font-family: 'Segoe UI', -apple-system, Roboto, sans-serif;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 8px 18px;
-    border-radius: 18px;
-    border: none;
-    min-height: 36px;
-}
-
-QPushButton:disabled {
-    background-color: #E2DFE2;
-    color: #9A979A;
-}
-
-/* Start Recording button (Green gradient) */
-QPushButton#StartBtn {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #43D66D, stop:1 #2DBE5C);
-    color: white;
-}
-QPushButton#StartBtn:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #52E27B, stop:1 #3CCF6C);
-}
-QPushButton#StartBtn:pressed {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #33C65D, stop:1 #1DAE4C);
-}
-
-/* Stop Recording button (Soft red) */
-QPushButton#StopBtn {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF5A5A, stop:1 #E04848);
-    color: white;
-}
-QPushButton#StopBtn:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF6C6C, stop:1 #F05858);
-}
-QPushButton#StopBtn:pressed {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #EF4A4A, stop:1 #D03838);
-}
-
-/* Save Settings button (Purple/pink gradient) */
-QPushButton#SaveBtn {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF8FD8, stop:1 #D98FFF);
-    color: white;
-}
-QPushButton#SaveBtn:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FFA3E2, stop:1 #E5A3FF);
-}
-QPushButton#SaveBtn:pressed {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF7FC8, stop:1 #C97FFF);
-}
-
-/* Copy Cleaned Text button (Cyan accent) */
-QPushButton#CopyBtn {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #7CEBFF, stop:1 #52D8F0);
-    color: #1A2E35;
-}
-QPushButton#CopyBtn:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #92F0FF, stop:1 #67E1F5);
-}
-QPushButton#CopyBtn:pressed {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6CDDEE, stop:1 #42C2D8);
-}
-
-/* Path actions (Browse / Refresh) */
-QPushButton#BrowseBtn, QPushButton#RefreshBtn {
-    background-color: rgba(255, 255, 255, 0.85);
-    border: 1px solid rgba(220, 210, 220, 0.6);
-    border-radius: 14px;
-    padding: 4px 12px;
-    min-height: 28px;
-    font-size: 11px;
-    color: #444444;
-}
-QPushButton#BrowseBtn:hover, QPushButton#RefreshBtn:hover {
-    background-color: #FFFFFF;
-    border-color: #D98FFF;
-    color: #111111;
-}
-QPushButton#BrowseBtn:pressed, QPushButton#RefreshBtn:pressed {
-    background-color: #F2EFF2;
-    border-color: #C97FFF;
-}
-
-/* Interactive inputs */
+/* Clean Form inputs */
 QComboBox, QLineEdit, QPlainTextEdit {
-    background-color: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(210, 200, 210, 0.55);
-    border-radius: 10px;
-    padding: 8px 12px;
-    font-family: 'Segoe UI', -apple-system, Roboto, sans-serif;
+    background-color: #FFFFFF;
+    border: 1px solid #E5E5E7;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-family: 'Segoe UI', -apple-system, sans-serif;
     font-size: 13px;
-    color: #222222;
+    color: #1D1D1F;
 }
 
 QComboBox:hover, QLineEdit:hover, QPlainTextEdit:hover {
-    border: 1px solid rgba(217, 143, 255, 0.5);
-    background-color: rgba(255, 255, 255, 0.82);
+    border-color: #C5C5C7;
 }
 
 QComboBox:focus, QLineEdit:focus, QPlainTextEdit:focus {
-    border: 1.5px solid #D98FFF;
+    border-color: #007AFF;
     background-color: #FFFFFF;
 }
 
-/* Text Editors styling */
-QPlainTextEdit#RawText {
-    background-color: rgba(244, 241, 244, 0.75);
-    border: 1px solid rgba(220, 215, 220, 0.6);
-}
-
-QPlainTextEdit#CleanText {
-    background-color: rgba(255, 255, 255, 0.88);
-    border: 1.5px solid rgba(124, 235, 255, 0.65); /* Highlight cyan border */
-}
-
-/* Custom Dropdown spacing */
+/* Dropdown Arrow customization */
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
@@ -171,148 +86,427 @@ QComboBox::down-arrow {
 
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
-    border: 1px solid rgba(217, 143, 255, 0.4);
+    border: 1px solid #E5E5E7;
     border-radius: 8px;
-    selection-background-color: #F6EDFC;
-    selection-color: #222222;
+    selection-background-color: #F2F2F7;
+    selection-color: #1D1D1F;
     padding: 4px;
 }
 
-/* QCheckBox customizing */
-QCheckBox {
-    spacing: 8px;
-    font-family: 'Segoe UI', -apple-system, Roboto, sans-serif;
-    font-size: 13px;
-    color: #333333;
-}
-
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 5px;
-    border: 1.5px solid rgba(210, 200, 210, 0.7);
-    background-color: rgba(255, 255, 255, 0.85);
-}
-
-QCheckBox::indicator:hover {
-    border-color: #D98FFF;
-    background-color: #FFFFFF;
-}
-
-QCheckBox::indicator:checked {
-    border-color: #D98FFF;
-    background-color: #D98FFF;
-}
-
-/* Status Label custom text */
-QLabel#StatusLabel {
-    color: #666666;
-    font-weight: 500;
+/* Bottom utility buttons & settings buttons */
+QPushButton {
+    font-family: 'Segoe UI', -apple-system, sans-serif;
     font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid #E5E5E7;
+    background-color: #FFFFFF;
+    color: #1D1D1F;
+    min-height: 28px;
+}
+
+QPushButton:hover {
+    background-color: #F5F5F7;
+    border-color: #DADCE0;
+}
+
+QPushButton:pressed {
+    background-color: #E5E5E7;
+}
+
+QPushButton:disabled {
+    background-color: #F5F5F7;
+    color: #8E8E93;
+    border-color: #E5E5E7;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #F5F5F7;
+    width: 8px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: #C5C5C7;
+    border-radius: 4px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #A1A1A5;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
 }
 """
 
+
 class GlassCard(QWidget):
     """
-    A elegant container widget designed to have translucent glass-like appearance
-    and a subtle modern shadow effect.
+    A minimal card container styled with a white background, rounded corners,
+    and an extremely soft shadow.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("GlassCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        
+        # Soft premium drop shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(16)
+        shadow.setColor(QColor(0, 0, 0, 10))  # Ultra soft shadow
+        shadow.setOffset(0, 2)
+        self.setGraphicsEffect(shadow)
+
+
+class WaveformLogo(QWidget):
+    """
+    Custom widget that draws a clean gray waveform logo.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(24, 24)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Waveform bars
+        heights = [8, 14, 18, 12, 6]
+        width = 2.5
+        spacing = 2.0
+        start_x = (self.width() - (len(heights) * width + (len(heights) - 1) * spacing)) / 2.0
+        
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor("#8E8E93"))) # Neutral gray
+        
+        for i, h in enumerate(heights):
+            x = start_x + i * (width + spacing)
+            y = (self.height() - h) / 2.0
+            painter.drawRoundedRect(QRectF(x, y, width, h), width/2.0, width/2.0)
+
+
+class StatusPill(QWidget):
+    """
+    Pill widget shown in the top-right header, displaying status dot and label.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(90, 26)
+        self.status_state = "idle"
+        self.status_text = "Ready"
+
+    def set_status(self, state: str):
+        self.status_state = state
+        if state == "idle":
+            self.status_text = "Ready"
+        elif state == "recording":
+            self.status_text = "Listening"
+        elif state == "processing":
+            self.status_text = "Processing"
+        elif state == "error":
+            self.status_text = "Error"
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Background pill shape
+        painter.setPen(QPen(QColor("#E5E5E7"), 1))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawRoundedRect(QRectF(1, 1, self.width() - 2, self.height() - 2), 12, 12)
+
+        # Status dot color
+        if self.status_state == "idle":
+            dot_color = QColor("#34C759")      # Green
+        elif self.status_state == "recording":
+            dot_color = QColor("#34C759")      # Green for active mic
+        elif self.status_state == "processing":
+            dot_color = QColor("#007AFF")      # Blue
+        elif self.status_state == "error":
+            dot_color = QColor("#FF3B30")      # Red
+        else:
+            dot_color = QColor("#8E8E93")
+
+        # Draw status dot
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(dot_color))
+        painter.drawEllipse(QPointF(14.0, self.height() / 2.0), 3.5, 3.5)
+
+        # Draw status text
+        painter.setPen(QColor("#1D1D1F"))
+        font = QFont("Segoe UI", 9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(22, 0, self.width() - 28, self.height()),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self.status_text
+        )
+
+
+class SegmentedControl(QWidget):
+    """
+    Custom Segmented Control (macOS styled) with zero gaps and raised white pill indicator.
+    """
+    valueChanged = Signal(str)
+
+    def __init__(self, items: list[tuple[str, str]], parent=None):
+        super().__init__(parent)
+        self.items = items
+        self.selected_value = items[0][1]
+        
+        self.setObjectName("SegmentedControl")
         self.setStyleSheet("""
-            QWidget#GlassCard {
-                background-color: rgba(255, 255, 255, 0.65);
-                border: 1px solid rgba(255, 255, 255, 0.5);
-                border-radius: 16px;
+            QWidget#SegmentedControl {
+                background-color: #E3E3E8;
+                border-radius: 8px;
             }
         """)
         
-        # Soft premium drop shadow (extremely low performance cost)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setColor(QColor(180, 160, 185, 30))
-        shadow.setOffset(0, 6)
-        self.setGraphicsEffect(shadow)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(0)  # Connected segments
+        
+        self.buttons = []
+        for label, val in items:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(self._make_selector(val))
+            layout.addWidget(btn, 1)  # Equal stretch factor
+            self.buttons.append((btn, val))
+            
+        self.set_value(self.selected_value)
+
+    def _make_selector(self, val):
+        return lambda: self.set_value(val, emit=True)
+
+    def set_value(self, val, emit=False):
+        self.selected_value = val
+        for btn, btn_val in self.buttons:
+            if btn_val == val:
+                btn.setChecked(True)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FFFFFF;
+                        color: #1D1D1F;
+                        border: 0.5px solid rgba(0, 0, 0, 0.08);
+                        border-radius: 6px;
+                        font-weight: 600;
+                        padding: 4px 10px;
+                        min-height: 24px;
+                    }
+                """)
+                # Dynamic soft shadow on selection
+                shadow = QGraphicsDropShadowEffect(btn)
+                shadow.setBlurRadius(3)
+                shadow.setColor(QColor(0, 0, 0, 20))
+                shadow.setOffset(0, 1)
+                btn.setGraphicsEffect(shadow)
+            else:
+                btn.setChecked(False)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: transparent;
+                        color: #6E6E73;
+                        border: none;
+                        border-radius: 6px;
+                        font-weight: 500;
+                        padding: 4px 10px;
+                        min-height: 24px;
+                    }
+                    QPushButton:hover {
+                        color: #1D1D1F;
+                    }
+                """)
+                btn.setGraphicsEffect(None)
+        if emit:
+            self.valueChanged.emit(val)
+
+    def currentData(self):
+        return self.selected_value
+
+
+class SwitchToggle(QCheckBox):
+    """
+    Custom widget that implements a gorgeous native macOS-style toggle switch.
+    """
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("""
+            QCheckBox {
+                spacing: 10px;
+                font-family: 'Segoe UI', -apple-system, sans-serif;
+                font-size: 13px;
+                color: #1D1D1F;
+            }
+            QCheckBox::indicator {
+                width: 0px;
+                height: 0px;
+            }
+        """)
+        self.setMinimumHeight(24)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Track parameters
+        track_w = 34.0
+        track_h = 20.0
+        track_x = 2.0
+        track_y = (self.height() - track_h) / 2.0
+        
+        checked = self.isChecked()
+        track_color = QColor("#34C759") if checked else QColor("#D1D1D6")
+        
+        # Draw track
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(track_color))
+        painter.drawRoundedRect(QRectF(track_x, track_y, track_w, track_h), 10.0, 10.0)
+
+        # Draw thumb
+        thumb_d = 16.0
+        thumb_y = track_y + 2.0
+        if checked:
+            thumb_x = track_x + track_w - thumb_d - 2.0
+        else:
+            thumb_x = track_x + 2.0
+            
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        
+        # Thumb drop shadow
+        shadow_color = QColor(0, 0, 0, 35)
+        painter.setBrush(QBrush(shadow_color))
+        painter.drawEllipse(QRectF(thumb_x, thumb_y + 0.5, thumb_d, thumb_d))
+        
+        # Real white thumb circle
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawEllipse(QRectF(thumb_x, thumb_y, thumb_d, thumb_d))
+
+        # Text label
+        if self.text():
+            painter.setPen(QColor("#1D1D1F"))
+            font = self.font()
+            font.setFamily("Segoe UI")
+            font.setPointSize(10)
+            painter.setFont(font)
+            painter.drawText(
+                QRectF(track_x + track_w + 10.0, 0, self.width() - track_w - 15.0, self.height()),
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                self.text()
+            )
 
 
 class TitleBar(QWidget):
     """
-    A custom Title Bar widget providing frameless window dragging controls
-    and styled minimize/close actions.
+    macOS Utility inspired TitleBar featuring Traffic Light window controls
+    on the left, centered Waveform logo + App Name, and status pill on the right.
+    Has a clean subtle bottom border.
     """
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.setFixedHeight(44)
+        self.setFixedHeight(54)
         
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(18, 0, 18, 0)
-        self.layout.setSpacing(10)
+        # Main layout
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
         
-        # Rounded Glowing Gradient Bubble Logo
-        self.logo_label = QWidget()
-        self.logo_label.setFixedSize(14, 14)
-        self.logo_label.setStyleSheet("""
-            QWidget {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF8FD8, stop:0.5 #D98FFF, stop:1 #7CEBFF);
-                border-radius: 7px;
-            }
-        """)
+        # Content widget
+        content_widget = QWidget()
+        content_layout = QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(16, 0, 16, 0)
+        content_layout.setSpacing(12)
         
-        # App Title Text
-        self.title_label = QLabel("Voice Cleanup AI")
-        self.title_label.setStyleSheet("""
-            QLabel {
-                color: #222222;
-                font-size: 12px;
-                font-weight: 700;
-                font-family: 'Segoe UI', -apple-system, Roboto, sans-serif;
-                letter-spacing: 0.5px;
-            }
-        """)
+        # 1. macOS Traffic Lights (Close, Minimize)
+        self.traffic_lights = QWidget()
+        lights_layout = QHBoxLayout(self.traffic_lights)
+        lights_layout.setContentsMargins(0, 0, 0, 0)
+        lights_layout.setSpacing(8)
         
-        self.layout.addWidget(self.logo_label)
-        self.layout.addWidget(self.title_label)
-        self.layout.addStretch()
-        
-        # Minimize Action Button (soft gray-lavender circle)
-        self.min_btn = QPushButton()
-        self.min_btn.setFixedSize(13, 13)
-        self.min_btn.setToolTip("Minimize")
-        self.min_btn.setStyleSheet("""
-            QPushButton {
-                background: #E4DFE3;
-                border-radius: 6px;
-                border: none;
-            }
-            QPushButton:hover {
-                background: #CDC6CC;
-            }
-        """)
-        self.min_btn.clicked.connect(self.parent.showMinimized)
-        
-        # Close Action Button (soft red circle)
+        # Close Light (Red #FF5F56)
         self.close_btn = QPushButton()
-        self.close_btn.setFixedSize(13, 13)
-        self.close_btn.setToolTip("Close")
+        self.close_btn.setFixedSize(12, 12)
         self.close_btn.setStyleSheet("""
             QPushButton {
-                background: #FF5A5A;
-                border-radius: 6px;
+                background-color: #FF5F56;
                 border: none;
+                border-radius: 6px;
             }
             QPushButton:hover {
-                background: #E84545;
+                background-color: #E0433C;
             }
         """)
         self.close_btn.clicked.connect(self.parent.close)
+        lights_layout.addWidget(self.close_btn)
         
-        self.layout.addWidget(self.min_btn)
-        self.layout.addWidget(self.close_btn)
+        # Minimize Light (Yellow #FFBD2E)
+        self.min_btn = QPushButton()
+        self.min_btn.setFixedSize(12, 12)
+        self.min_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FFBD2E;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #DCA123;
+            }
+        """)
+        self.min_btn.clicked.connect(self.parent.showMinimized)
+        lights_layout.addWidget(self.min_btn)
+        
+        content_layout.addWidget(self.traffic_lights)
+        
+        # Spacer before logo/title
+        content_layout.addSpacing(6)
+        
+        # 2. Waveform Logo and App Name
+        self.logo = WaveformLogo()
+        self.title_label = QLabel("Voice Cleanup")
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: #1D1D1F;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Segoe UI', -apple-system, sans-serif;
+            }
+        """)
+        
+        content_layout.addWidget(self.logo)
+        content_layout.addWidget(self.title_label)
+        
+        content_layout.addStretch()
+        
+        # 3. Status Pill on the right
+        self.status_pill = StatusPill()
+        content_layout.addWidget(self.status_pill)
+        
+        self.main_layout.addWidget(content_widget, 1)
+        
+        # 4. Subtle 1px Bottom Border Line
+        self.bottom_line = QFrame(self)
+        self.bottom_line.setFrameShape(QFrame.Shape.HLine)
+        self.bottom_line.setFrameShadow(QFrame.Shadow.Plain)
+        self.bottom_line.setLineWidth(1)
+        self.bottom_line.setFixedHeight(1)
+        self.bottom_line.setStyleSheet("color: #E5E5E7; background-color: #E5E5E7; border: none;")
+        self.main_layout.addWidget(self.bottom_line)
         
         self.drag_position = QPoint()
+
+    def set_status(self, state: str):
+        self.status_pill.set_status(state)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:

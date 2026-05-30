@@ -5,7 +5,6 @@ from PySide6.QtCore import QThread, QTimer, Signal, Slot, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut, QColor
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -17,7 +16,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QVBoxLayout,
     QWidget,
-    QGridLayout,
     QGraphicsDropShadowEffect,
 )
 
@@ -38,7 +36,8 @@ from config.settings import (
 from frontend.hotkey_controller import PushToTalkHotkeyController
 from frontend.overlay import MicrophoneOverlay
 from transcription.whisper_engine import WhisperCppEngine
-from frontend.styles import QSS_STYLING, TitleBar, GlassCard
+from frontend.styles import QSS_STYLING, TitleBar, GlassCard, SwitchToggle, SegmentedControl
+from frontend.stats_dialog import StatisticsDashboardDialog
 
 
 class TranscriptionWorker(QThread):
@@ -77,10 +76,10 @@ class TranscriptionWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Voice Cleanup AI")
-        self.resize(1020, 760)  # Expanded slightly to accommodate margins and 2-column grid
+        self.setWindowTitle("Voice Cleanup")
+        self.resize(1020, 600)  # Wider, calmer proportions
 
-        # Modern Frameless Window Setup with Transparent Backplate
+        # Frameless Window Setup with Translucent Backplate
         self.setWindowFlags(
             Qt.WindowType.Window
             | Qt.WindowType.FramelessWindowHint
@@ -98,7 +97,6 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.setStyleSheet(QSS_STYLING)
         self._load_settings_into_ui()
-        self._refresh_stats_display()
         self._refresh_microphones()
         self.overlay = MicrophoneOverlay()
         self.hotkey_controller = PushToTalkHotkeyController()
@@ -107,6 +105,12 @@ class MainWindow(QMainWindow):
         self.hotkey_controller.error.connect(self._push_to_talk_error)
         self._apply_push_to_talk_settings()
         self.hotkey_controller.start()
+
+        # Set initial status dot & visibility
+        self.set_app_status("idle")
+        if self.settings.overlay_enabled:
+            self.overlay.set_state("idle")
+            self.overlay.show()
 
     def _build_ui(self) -> None:
         # Outer Widget is fully transparent to allow drop shadow of CentralWidget to bleed on desktop
@@ -120,9 +124,9 @@ class MainWindow(QMainWindow):
         
         # Soft Outer window drop shadow
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(30)
-        shadow.setColor(QColor(180, 160, 185, 45))
-        shadow.setOffset(0, 8)
+        shadow.setBlurRadius(24)
+        shadow.setColor(QColor(0, 0, 0, 20))
+        shadow.setOffset(0, 6)
         central.setGraphicsEffect(shadow)
 
         self.outer_layout.addWidget(central)
@@ -130,8 +134,8 @@ class MainWindow(QMainWindow):
 
         # Root Layout inside visible frame
         root = QVBoxLayout(central)
-        root.setContentsMargins(16, 8, 16, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(20, 10, 20, 20)
+        root.setSpacing(14)
 
         # Add Custom Title Bar
         self.title_bar = TitleBar(self)
@@ -139,325 +143,363 @@ class MainWindow(QMainWindow):
 
         # Main Workspace: 2-Column Split
         body_layout = QHBoxLayout()
-        body_layout.setSpacing(18)
+        body_layout.setSpacing(20)
         root.addLayout(body_layout)
 
-        # Left Column - Settings Stack (40% width proportional)
-        settings_layout = QVBoxLayout()
-        settings_layout.setSpacing(14)
-        body_layout.addLayout(settings_layout, 40)
+        # Left Column - Compact Settings card & stretch (40% width)
+        settings_column = QVBoxLayout()
+        settings_column.setSpacing(0)
+        body_layout.addLayout(settings_column, 40)
 
-        # Right Column - Operations Stack (60% width proportional)
-        workspace_layout = QVBoxLayout()
-        workspace_layout.setSpacing(14)
-        body_layout.addLayout(workspace_layout, 60)
+        # Right Column - Document stacked cards (60% width)
+        text_column = QVBoxLayout()
+        text_column.setSpacing(16)
+        body_layout.addLayout(text_column, 60)
 
-        # ------------------- LEFT COLUMN: SETTINGS CARDS -------------------
+        # ------------------- LEFT COLUMN: SINGLE SETTINGS CARD -------------------
+        settings_card = GlassCard()
+        card_layout = QVBoxLayout(settings_card)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        card_layout.setSpacing(12)
 
-        # Card 1: Audio Device & Model Setup
-        card1 = GlassCard()
-        card1_layout = QVBoxLayout(card1)
-        card1_layout.setContentsMargins(16, 14, 16, 14)
-        card1_layout.setSpacing(10)
+        # Header Title
+        lbl_settings_title = QLabel("Settings")
+        lbl_settings_title.setProperty("class", "CardHeader")
+        card_layout.addWidget(lbl_settings_title)
 
-        lbl1_title = QLabel("Audio & Transcription")
-        lbl1_title.setProperty("class", "CardHeader")
-        lbl1_sub = QLabel("Choose your microphone and transcription quality.")
-        lbl1_sub.setProperty("class", "CardSubHeader")
-        card1_layout.addWidget(lbl1_title)
-        card1_layout.addWidget(lbl1_sub)
+        # Field 1: Microphone Dropdown
+        lbl_mic_head = QLabel("Microphone")
+        lbl_mic_head.setStyleSheet("font-weight: bold; color: #1D1D1F;")
+        card_layout.addWidget(lbl_mic_head)
 
         mic_row = QHBoxLayout()
-        lbl_mic = QLabel("Microphone:")
-        lbl_mic.setFixedWidth(75)
+        mic_row.setSpacing(8)
         self.microphone_combo = QComboBox()
+        self.microphone_combo.setFixedHeight(30)
         refresh_mics_button = QPushButton("Refresh")
         refresh_mics_button.setObjectName("RefreshBtn")
+        refresh_mics_button.setFixedHeight(30)
         refresh_mics_button.clicked.connect(self._refresh_microphones)
-        mic_row.addWidget(lbl_mic)
         mic_row.addWidget(self.microphone_combo, 1)
         mic_row.addWidget(refresh_mics_button)
-        card1_layout.addLayout(mic_row)
+        card_layout.addLayout(mic_row)
 
-        model_row = QHBoxLayout()
-        lbl_model = QLabel("Transcription Quality:")
-        lbl_model.setFixedWidth(135)
-        self.model_size_combo = QComboBox()
-        for model_key, model_info in WHISPER_MODELS.items():
-            self.model_size_combo.addItem(model_info["label"], model_key)
-        self.model_size_combo.currentIndexChanged.connect(self._model_selection_changed)
-        model_row.addWidget(lbl_model)
-        model_row.addWidget(self.model_size_combo, 1)
-        card1_layout.addLayout(model_row)
+        # Field 2: Transcription Quality (macOS Segmented Control)
+        lbl_quality_head = QLabel("Transcription Quality")
+        lbl_quality_head.setStyleSheet("font-weight: bold; color: #1D1D1F; margin-top: 4px;")
+        card_layout.addWidget(lbl_quality_head)
+
+        self.model_size_segmented = SegmentedControl([
+            ("Fast", "base"),
+            ("Balanced", "small"),
+            ("Accurate", "medium")
+        ])
+        self.model_size_segmented.valueChanged.connect(self._model_selection_changed)
+        card_layout.addWidget(self.model_size_segmented)
 
         self.model_status_label = QLabel("")
         self.model_status_label.setWordWrap(True)
         self.model_status_label.setProperty("class", "CardSubHeader")
-        card1_layout.addWidget(self.model_status_label)
-        
-        settings_layout.addWidget(card1)
+        card_layout.addWidget(self.model_status_label)
 
-        # Card 2: Advanced Settings
-        card2 = GlassCard()
-        card2_layout = QVBoxLayout(card2)
-        card2_layout.setContentsMargins(16, 14, 16, 14)
-        card2_layout.setSpacing(10)
+        # Field 3: Dictation Toggles
+        lbl_toggles_head = QLabel("Dictation Toggles")
+        lbl_toggles_head.setStyleSheet("font-weight: bold; color: #1D1D1F; margin-top: 4px;")
+        card_layout.addWidget(lbl_toggles_head)
 
-        self.advanced_settings_button = QPushButton("Advanced Settings")
-        self.advanced_settings_button.setCheckable(True)
-        self.advanced_settings_button.setChecked(False)
-        self.advanced_settings_button.clicked.connect(self._toggle_advanced_settings)
-        card2_layout.addWidget(self.advanced_settings_button)
+        # Switch Toggle 1: Smart Cleanup
+        t1_row = QHBoxLayout()
+        self.cleanup_enabled_switch = SwitchToggle("Smart Cleanup")
+        t1_row.addWidget(self.cleanup_enabled_switch, 1)
+        card_layout.addLayout(t1_row)
 
-        self.advanced_settings_body = QWidget()
-        advanced_layout = QVBoxLayout(self.advanced_settings_body)
-        advanced_layout.setContentsMargins(0, 0, 0, 0)
-        advanced_layout.setSpacing(10)
-        self.advanced_settings_body.setVisible(False)
+        # Switch Toggle 2: Auto Paste
+        t2_row = QHBoxLayout()
+        self.enable_auto_paste_switch = SwitchToggle("Auto Paste")
+        t2_row.addWidget(self.enable_auto_paste_switch, 1)
+        card_layout.addLayout(t2_row)
 
-        lbl2_title = QLabel("Local Engine Settings")
-        lbl2_title.setProperty("class", "CardHeader")
-        lbl2_sub = QLabel("Optional paths and advanced cleanup settings.")
-        lbl2_sub.setProperty("class", "CardSubHeader")
-        advanced_layout.addWidget(lbl2_title)
-        advanced_layout.addWidget(lbl2_sub)
+        # Switch Toggle 3: Push-to-Talk
+        t3_row = QHBoxLayout()
+        self.enable_ptt_switch = SwitchToggle("Push-to-Talk")
+        t3_row.addWidget(self.enable_ptt_switch, 1)
+        card_layout.addLayout(t3_row)
 
+        card_layout.addSpacing(4)
+
+        # Advanced Settings collapsible trigger row
+        self.adv_toggle_btn = QPushButton("Advanced Settings ▸")
+        self.adv_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.adv_toggle_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #007AFF;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 13px;
+                font-weight: bold;
+                text-align: left;
+                padding: 4px 0px;
+                min-height: 20px;
+            }
+            QPushButton:hover {
+                color: #0056B3;
+            }
+        """)
+        self.adv_toggle_btn.clicked.connect(self._toggle_advanced_settings)
+        card_layout.addWidget(self.adv_toggle_btn)
+
+        # Collapsible technical advanced container widget
+        self.adv_container = QWidget()
+        adv_sub_layout = QVBoxLayout(self.adv_container)
+        adv_sub_layout.setContentsMargins(0, 4, 0, 4)
+        adv_sub_layout.setSpacing(10)
+
+        # Show Desktop Overlay switch
+        self.overlay_enabled_switch = SwitchToggle("Show Desktop Overlay")
+        adv_sub_layout.addWidget(self.overlay_enabled_switch)
+
+        # Shortcut choice dropdown
+        shortcut_row = QHBoxLayout()
+        lbl_shortcut = QLabel("PTT Shortcut:")
+        lbl_shortcut.setStyleSheet("color: #6E6E73;")
+        self.hotkey_choice_combo = QComboBox()
+        self.hotkey_choice_combo.addItem("Ctrl + Windows", "ctrl_win")
+        self.hotkey_choice_combo.addItem("Ctrl + Alt", "ctrl_alt")
+        self.hotkey_choice_combo.addItem("Ctrl + Shift + Space", "ctrl_shift_space")
+        shortcut_row.addWidget(lbl_shortcut)
+        shortcut_row.addWidget(self.hotkey_choice_combo, 1)
+        adv_sub_layout.addLayout(shortcut_row)
+
+        # Speech Engine path
         exe_row = QHBoxLayout()
-        lbl_exe = QLabel("Speech engine:")
-        lbl_exe.setFixedWidth(80)
+        lbl_exe = QLabel("Speech Engine:")
+        lbl_exe.setStyleSheet("color: #6E6E73;")
         self.whisper_exe_edit = QLineEdit()
-        self.whisper_exe_edit.setPlaceholderText("Path to main.exe or whisper-cli.exe")
+        self.whisper_exe_edit.setPlaceholderText("Path to whisper-cli.exe")
         whisper_exe_button = QPushButton("Browse")
         whisper_exe_button.setObjectName("BrowseBtn")
+        whisper_exe_button.setFixedHeight(26)
         whisper_exe_button.clicked.connect(self._choose_whisper_exe)
         exe_row.addWidget(lbl_exe)
         exe_row.addWidget(self.whisper_exe_edit, 1)
         exe_row.addWidget(whisper_exe_button)
-        advanced_layout.addLayout(exe_row)
+        adv_sub_layout.addLayout(exe_row)
 
+        # Model file
         model_row2 = QHBoxLayout()
-        lbl_path = QLabel("Model file:")
-        lbl_path.setFixedWidth(80)
+        lbl_path = QLabel("Model File:")
+        lbl_path.setStyleSheet("color: #6E6E73;")
         self.model_path_edit = QLineEdit()
-        self.model_path_edit.setPlaceholderText("Path to ggml-base.bin")
         self.model_path_edit.setReadOnly(True)
-        model_button = QPushButton("Folder")
-        model_button.setObjectName("BrowseBtn")
-        model_button.clicked.connect(self._open_models_folder)
+        model_folder_button = QPushButton("Folder")
+        model_folder_button.setObjectName("BrowseBtn")
+        model_folder_button.setFixedHeight(26)
+        model_folder_button.clicked.connect(self._open_models_folder)
         model_row2.addWidget(lbl_path)
         model_row2.addWidget(self.model_path_edit, 1)
-        model_row2.addWidget(model_button)
-        advanced_layout.addLayout(model_row2)
+        model_row2.addWidget(model_folder_button)
+        adv_sub_layout.addLayout(model_row2)
 
-        self.cleanup_prompt_edit = QPlainTextEdit()
-        self.cleanup_prompt_edit.setPlaceholderText("Advanced cleanup instructions...")
-        self.cleanup_prompt_edit.setFixedHeight(75)
-        advanced_layout.addWidget(self.cleanup_prompt_edit)
-
+        # Cleanup Style backend selector
         cleanup_backend_row = QHBoxLayout()
-        lbl_cleanup_backend = QLabel("Cleanup style:")
+        lbl_cleanup_backend = QLabel("Cleanup Style:")
+        lbl_cleanup_backend.setStyleSheet("color: #6E6E73;")
         self.cleanup_backend_combo = QComboBox()
         self.cleanup_backend_combo.addItem("None", "none")
         self.cleanup_backend_combo.addItem("Smart Cleanup", "asr_postprocess")
         self.cleanup_backend_combo.addItem("AI Rewrite Cleanup", "ollama_llm")
         cleanup_backend_row.addWidget(lbl_cleanup_backend)
         cleanup_backend_row.addWidget(self.cleanup_backend_combo, 1)
-        advanced_layout.addLayout(cleanup_backend_row)
+        adv_sub_layout.addLayout(cleanup_backend_row)
 
+        # AI Server URL
         ollama_url_row = QHBoxLayout()
-        lbl_ollama_url = QLabel("AI server:")
+        lbl_ollama_url = QLabel("AI Server URL:")
+        lbl_ollama_url.setStyleSheet("color: #6E6E73;")
         self.ollama_url_edit = QLineEdit()
         self.ollama_url_edit.setPlaceholderText("http://localhost:11434")
         ollama_url_row.addWidget(lbl_ollama_url)
         ollama_url_row.addWidget(self.ollama_url_edit, 1)
-        advanced_layout.addLayout(ollama_url_row)
+        adv_sub_layout.addLayout(ollama_url_row)
 
+        # AI Model dropdown
         ollama_model_row = QHBoxLayout()
-        lbl_ollama_model = QLabel("AI model:")
+        lbl_ollama_model = QLabel("AI Model:")
+        lbl_ollama_model.setStyleSheet("color: #6E6E73;")
         self.ollama_model_combo = QComboBox()
         self.ollama_model_combo.setEditable(True)
         self.ollama_model_combo.addItems(["qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:3b"])
         ollama_model_row.addWidget(lbl_ollama_model)
         ollama_model_row.addWidget(self.ollama_model_combo, 1)
-        advanced_layout.addLayout(ollama_model_row)
+        adv_sub_layout.addLayout(ollama_model_row)
 
-        card2_layout.addWidget(self.advanced_settings_body)
+        # Smart Cleanup Advanced Instructions
+        lbl_adv_prompt = QLabel("Smart Cleanup Instructions:")
+        lbl_adv_prompt.setStyleSheet("color: #6E6E73; font-weight: bold;")
+        self.cleanup_prompt_edit = QPlainTextEdit()
+        self.cleanup_prompt_edit.setPlaceholderText("Advanced cleanup instructions...")
+        self.cleanup_prompt_edit.setFixedHeight(64)
+        adv_sub_layout.addWidget(lbl_adv_prompt)
+        adv_sub_layout.addWidget(self.cleanup_prompt_edit)
 
-        settings_layout.addWidget(card2)
+        self.adv_container.setVisible(False)
+        card_layout.addWidget(self.adv_container)
 
-        # Card 3: Dictation Behavior
-        card3 = GlassCard()
-        card3_layout = QVBoxLayout(card3)
-        card3_layout.setContentsMargins(16, 14, 16, 14)
-        card3_layout.setSpacing(10)
+        # Save Settings button at the bottom of settings card
+        self.save_settings_btn = QPushButton("Save Settings")
+        self.save_settings_btn.setObjectName("SaveBtn")
+        self.save_settings_btn.setFixedHeight(34)
+        self.save_settings_btn.clicked.connect(lambda: self._save_settings_from_ui())
+        card_layout.addWidget(self.save_settings_btn)
 
-        lbl3_title = QLabel("Dictation Behavior")
-        lbl3_title.setProperty("class", "CardHeader")
-        lbl3_sub = QLabel("Choose what happens after you speak.")
-        lbl3_sub.setProperty("class", "CardSubHeader")
-        card3_layout.addWidget(lbl3_title)
-        card3_layout.addWidget(lbl3_sub)
+        settings_column.addWidget(settings_card)
+        settings_column.addStretch()  # Pack tightly at the top
 
-        cleanup_row = QHBoxLayout()
-        self.cleanup_enabled_checkbox = QCheckBox("Clean up dictation")
-        cleanup_row.addWidget(self.cleanup_enabled_checkbox)
-        cleanup_row.addStretch()
-        card3_layout.addLayout(cleanup_row)
+        # ------------------- RIGHT COLUMN: ORIGINAL & CLEANED READABLE CARDS -------------------
+        
+        # Card 1: Original Text Card
+        original_card = GlassCard()
+        original_layout = QVBoxLayout(original_card)
+        original_layout.setContentsMargins(20, 16, 20, 16)
+        original_layout.setSpacing(8)
 
-        chk_grid = QGridLayout()
-        self.enable_ptt_checkbox = QCheckBox("Push-to-talk")
-        self.enable_auto_paste_checkbox = QCheckBox("Paste after dictation")
-        self.overlay_enabled_checkbox = QCheckBox("Show Overlay")
-        chk_grid.addWidget(self.enable_ptt_checkbox, 0, 0)
-        chk_grid.addWidget(self.enable_auto_paste_checkbox, 0, 1)
-        chk_grid.addWidget(self.overlay_enabled_checkbox, 1, 0)
-        card3_layout.addLayout(chk_grid)
-
-        hotkey_row = QHBoxLayout()
-        lbl_hotkey = QLabel("Shortcut:")
-        self.hotkey_choice_combo = QComboBox()
-        self.hotkey_choice_combo.addItem("Ctrl + Windows", "ctrl_win")
-        self.hotkey_choice_combo.addItem("Ctrl + Alt", "ctrl_alt")
-        self.hotkey_choice_combo.addItem("Ctrl + Shift + Space", "ctrl_shift_space")
-        hotkey_row.addWidget(lbl_hotkey)
-        hotkey_row.addWidget(self.hotkey_choice_combo, 1)
-        card3_layout.addLayout(hotkey_row)
-
-        save_row = QHBoxLayout()
-        save_row.addStretch()
-        save_button = QPushButton("Save Settings")
-        save_button.setObjectName("SaveBtn")
-        save_button.clicked.connect(lambda: self._save_settings_from_ui())
-        save_row.addWidget(save_button)
-        card3_layout.addLayout(save_row)
-
-        settings_layout.addWidget(card3)
-
-        # ------------------- RIGHT COLUMN: WORKSPACE CARDS -------------------
-
-        # Recording Control Panel
-        controls_card = GlassCard()
-        controls_layout = QHBoxLayout(controls_card)
-        controls_layout.setContentsMargins(14, 12, 14, 12)
-        controls_layout.setSpacing(12)
-
-        self.start_button = QPushButton("Start Recording")
-        self.start_button.setObjectName("StartBtn")
-        self.stop_button = QPushButton("Stop Recording")
-        self.stop_button.setObjectName("StopBtn")
-        self.stop_button.setEnabled(False)
-
-        self.start_button.clicked.connect(self.start_recording)
-        self.stop_button.clicked.connect(self.stop_recording)
-
-        controls_layout.addWidget(self.start_button, 1)
-        controls_layout.addWidget(self.stop_button, 1)
-        workspace_layout.addWidget(controls_card)
-
-        stats_card = GlassCard()
-        stats_layout = QVBoxLayout(stats_card)
-        stats_layout.setContentsMargins(14, 12, 14, 12)
-        stats_layout.setSpacing(6)
-
-        lbl_stats = QLabel("Today's Dictation")
-        lbl_stats.setProperty("class", "CardHeader")
-        stats_layout.addWidget(lbl_stats)
-
-        stats_values = QHBoxLayout()
-        self.stats_sessions_label = QLabel("Sessions: 0")
-        self.stats_words_label = QLabel("Words: 0")
-        self.stats_time_label = QLabel("Time saved: ~0 min")
-        stats_values.addWidget(self.stats_sessions_label)
-        stats_values.addWidget(self.stats_words_label)
-        stats_values.addWidget(self.stats_time_label)
-        stats_layout.addLayout(stats_values)
-        workspace_layout.addWidget(stats_card)
-
-        # Raw Transcription Card
-        raw_card = GlassCard()
-        raw_layout = QVBoxLayout(raw_card)
-        raw_layout.setContentsMargins(14, 12, 14, 12)
-        raw_layout.setSpacing(6)
-
-        lbl_raw = QLabel("Raw Transcription")
-        lbl_raw.setProperty("class", "CardHeader")
+        lbl_original = QLabel("Original Text")
+        lbl_original.setProperty("class", "CardHeader")
         self.raw_text = QPlainTextEdit()
         self.raw_text.setObjectName("RawText")
         self.raw_text.setPlaceholderText("Spoken audio transcription will appear here...")
-        raw_layout.addWidget(lbl_raw)
-        raw_layout.addWidget(self.raw_text, 1)
-        workspace_layout.addWidget(raw_card, 1)
+        self.raw_text.setStyleSheet("""
+            QPlainTextEdit#RawText {
+                border: none;
+                background-color: transparent;
+                font-family: 'Segoe UI', -apple-system, sans-serif;
+                font-size: 14px;
+                color: #1D1D1F;
+                padding: 0px;
+            }
+        """)
+        
+        # Style placeholder palette to clean gray #AEAEB2
+        p_raw = self.raw_text.palette()
+        p_raw.setColor(p_raw.ColorRole.PlaceholderText, QColor("#AEAEB2"))
+        self.raw_text.setPalette(p_raw)
+        
+        original_layout.addWidget(lbl_original)
+        original_layout.addWidget(self.raw_text, 1)
+        text_column.addWidget(original_card, 1)
 
-        # Cleaned Text Card
-        clean_card = GlassCard()
-        clean_layout = QVBoxLayout(clean_card)
-        clean_layout.setContentsMargins(14, 12, 14, 12)
-        clean_layout.setSpacing(6)
+        # Card 2: Cleaned Text Card
+        cleaned_card = GlassCard()
+        cleaned_layout = QVBoxLayout(cleaned_card)
+        cleaned_layout.setContentsMargins(20, 16, 20, 16)
+        cleaned_layout.setSpacing(8)
 
-        lbl_clean = QLabel("Cleaned Text (AI Enhanced)")
-        lbl_clean.setProperty("class", "CardHeader")
+        lbl_cleaned = QLabel("Cleaned Text")
+        lbl_cleaned.setProperty("class", "CardHeader")
         self.cleaned_text = QPlainTextEdit()
         self.cleaned_text.setObjectName("CleanText")
-        self.cleaned_text.setPlaceholderText("Polished, clean AI text will appear here...")
-        clean_layout.addWidget(lbl_clean)
-        clean_layout.addWidget(self.cleaned_text, 1)
-        workspace_layout.addWidget(clean_card, 1)
+        self.cleaned_text.setPlaceholderText("AI-cleaned text will appear here...")
+        self.cleaned_text.setStyleSheet("""
+            QPlainTextEdit#CleanText {
+                border: none;
+                background-color: transparent;
+                font-family: 'Segoe UI', -apple-system, sans-serif;
+                font-size: 14px;
+                color: #1D1D1F;
+                padding: 0px;
+            }
+        """)
+        
+        # Style placeholder palette to clean gray #AEAEB2
+        p_clean = self.cleaned_text.palette()
+        p_clean.setColor(p_clean.ColorRole.PlaceholderText, QColor("#AEAEB2"))
+        self.cleaned_text.setPalette(p_clean)
+        
+        cleaned_layout.addWidget(lbl_cleaned)
+        cleaned_layout.addWidget(self.cleaned_text, 1)
+        text_column.addWidget(cleaned_card, 1)
 
-        # Status & Action Bar
-        bottom_card = GlassCard()
-        bottom_layout = QHBoxLayout(bottom_card)
-        bottom_layout.setContentsMargins(16, 10, 16, 10)
+        # ------------------- BOTTOM UTILITY BAR (EMOJI-FREE) -------------------
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(2, 6, 2, 2)
+        bottom_row.setSpacing(10)
 
-        self.status_label = QLabel("System Status: Ready")
-        self.status_label.setObjectName("StatusLabel")
-
+        # Left side buttons: Record, Copy, Settings, Stats
+        self.record_button = QPushButton("Start Recording")
+        self.record_button.setObjectName("RecordToggleBtn")
+        self.record_button.setFixedHeight(34)
+        self.record_button.clicked.connect(self._toggle_recording)
+        
         copy_button = QPushButton("Copy Cleaned Text")
-        copy_button.setObjectName("CopyBtn")
+        copy_button.setFixedHeight(34)
         copy_button.clicked.connect(self.copy_cleaned_text)
 
-        bottom_layout.addWidget(self.status_label, 1)
-        bottom_layout.addWidget(copy_button)
-        workspace_layout.addWidget(bottom_card)
+        settings_button = QPushButton("Settings")
+        settings_button.setFixedHeight(34)
+        settings_button.clicked.connect(self._toggle_advanced_settings)
 
-        # True global hotkey activator shortcut inside window
+        stats_button = QPushButton("Stats")
+        stats_button.setFixedHeight(34)
+        stats_button.clicked.connect(self.show_stats_dashboard)
+
+        bottom_row.addWidget(self.record_button)
+        bottom_row.addWidget(copy_button)
+        bottom_row.addWidget(settings_button)
+        bottom_row.addWidget(stats_button)
+
+        bottom_row.addStretch()
+
+        # Right side status indicator label
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("font-size: 12px; color: #6E6E73; font-weight: 500; font-family: 'Segoe UI';")
+        bottom_row.addWidget(self.status_label)
+
+        root.addLayout(bottom_row)
+
+        # Global hotkey shortcut inside active window as well
         shortcut = QShortcut(QKeySequence("Ctrl+Meta"), self)
         shortcut.activated.connect(self._toggle_recording)
 
     def _load_settings_into_ui(self) -> None:
-        model_index = self.model_size_combo.findData(self.settings.model_size)
-        self.model_size_combo.setCurrentIndex(model_index if model_index >= 0 else 0)
+        self.model_size_segmented.set_value(self.settings.model_size)
         self.whisper_exe_edit.setText(self.settings.whisper_exe_path)
         self._model_selection_changed()
+        
         self.cleanup_prompt_edit.setPlainText(self.settings.cleanup_prompt)
-        self.cleanup_enabled_checkbox.setChecked(self.settings.cleanup_enabled)
+        self.cleanup_enabled_switch.setChecked(self.settings.cleanup_enabled)
+        
         cleanup_index = self.cleanup_backend_combo.findData(self.settings.cleanup_backend)
         self.cleanup_backend_combo.setCurrentIndex(cleanup_index if cleanup_index >= 0 else 1)
+        
         self.ollama_url_edit.setText(self.settings.ollama_url)
         ollama_model_index = self.ollama_model_combo.findText(self.settings.ollama_model)
         if ollama_model_index >= 0:
             self.ollama_model_combo.setCurrentIndex(ollama_model_index)
         else:
             self.ollama_model_combo.setEditText(self.settings.ollama_model)
-        self.enable_ptt_checkbox.setChecked(self.settings.enable_global_push_to_talk)
-        self.enable_auto_paste_checkbox.setChecked(self.settings.enable_auto_paste)
-        self.overlay_enabled_checkbox.setChecked(self.settings.overlay_enabled)
+            
+        self.enable_ptt_switch.setChecked(self.settings.enable_global_push_to_talk)
+        self.enable_auto_paste_switch.setChecked(self.settings.enable_auto_paste)
+        self.overlay_enabled_switch.setChecked(self.settings.overlay_enabled)
+        
         index = self.hotkey_choice_combo.findData(self.settings.hotkey_choice)
         self.hotkey_choice_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _settings_from_ui(self) -> AppSettings:
         return AppSettings(
             microphone_name=self.microphone_combo.currentText(),
-            model_size=self.model_size_combo.currentData(),
+            model_size=self.model_size_segmented.currentData(),
             whisper_exe_path=self.whisper_exe_edit.text().strip(),
-            model_path=str(get_whisper_model_path(self.model_size_combo.currentData())),
+            model_path=str(get_whisper_model_path(self.model_size_segmented.currentData())),
             cleanup_prompt=self.cleanup_prompt_edit.toPlainText().strip(),
             cleanup_backend=self.cleanup_backend_combo.currentData(),
-            cleanup_enabled=self.cleanup_enabled_checkbox.isChecked(),
+            cleanup_enabled=self.cleanup_enabled_switch.isChecked(),
             ollama_url=self.ollama_url_edit.text().strip() or "http://localhost:11434",
             ollama_model=self.ollama_model_combo.currentText().strip() or "qwen2.5:1.5b",
-            enable_global_push_to_talk=self.enable_ptt_checkbox.isChecked(),
-            enable_auto_paste=self.enable_auto_paste_checkbox.isChecked(),
-            overlay_enabled=self.overlay_enabled_checkbox.isChecked(),
+            enable_global_push_to_talk=self.enable_ptt_switch.isChecked(),
+            enable_auto_paste=self.enable_auto_paste_switch.isChecked(),
+            overlay_enabled=self.overlay_enabled_switch.isChecked(),
             hotkey_choice=self.hotkey_choice_combo.currentData(),
         )
 
@@ -466,25 +508,22 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
         if apply_hotkey_settings and hasattr(self, "hotkey_controller"):
             self._apply_push_to_talk_settings()
-        self.status_label.setText("System Status: Settings saved")
+        self.set_app_status("idle", "Settings saved")
 
     def _toggle_advanced_settings(self) -> None:
-        expanded = self.advanced_settings_button.isChecked()
-        self.advanced_settings_body.setVisible(expanded)
-        self.advanced_settings_button.setText("Advanced Settings" if not expanded else "Advanced Settings - Hide")
-
-    def _refresh_stats_display(self) -> None:
-        stats = load_today_stats()
-        self.stats_sessions_label.setText(f"Sessions: {stats.sessions}")
-        self.stats_words_label.setText(f"Words: {stats.words}")
-        self.stats_time_label.setText(f"Time saved: ~{stats.minutes_saved} min")
+        visible = not self.adv_container.isVisible()
+        self.adv_container.setVisible(visible)
+        self.adv_toggle_btn.setText("Advanced Settings ▾" if visible else "Advanced Settings ▸")
 
     def _record_dictation_stats(self, raw_text: str, cleaned_text: str) -> None:
         stats_text = cleaned_text.strip() or raw_text.strip()
         if not stats_text:
             return
-        record_dictation_session(stats_text)
-        self._refresh_stats_display()
+        
+        duration = getattr(self.recorder, "last_duration", 0.0)
+        mic_name = self.microphone_combo.currentText() or "Default Microphone"
+        
+        record_dictation_session(stats_text, duration_seconds=duration, microphone=mic_name)
 
     def _refresh_microphones(self) -> None:
         current = self.settings.microphone_name
@@ -506,7 +545,7 @@ class MainWindow(QMainWindow):
                 self.microphone_combo.setCurrentIndex(matches)
 
         if self.microphone_combo.count() == 0:
-            self.status_label.setText("System Status: No microphone devices found")
+            self.set_app_status("idle", "No microphone devices found")
 
     def _choose_whisper_exe(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Choose whisper.cpp executable", "", "Executable (*.exe);;All files (*)")
@@ -518,7 +557,7 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(WHISPER_MODELS_DIR)))
 
     def _model_selection_changed(self) -> None:
-        model_size = self.model_size_combo.currentData() or "base"
+        model_size = self.model_size_segmented.currentData() or "base"
         model_path = get_whisper_model_path(model_size)
         model_info = get_whisper_model_info(model_size)
         installed_text = "Installed" if model_path.is_file() else "Missing"
@@ -537,7 +576,7 @@ class MainWindow(QMainWindow):
         try:
             try:
                 log_event("start_recording: saving settings")
-                self._save_settings_from_ui()
+                self._save_settings_from_ui(apply_hotkey_settings=False)
             except Exception as exc:
                 log_event(f"start_recording settings save failed: {repr(exc)}")
                 raise RuntimeError(
@@ -548,42 +587,37 @@ class MainWindow(QMainWindow):
 
             device_index = self.microphone_combo.currentData()
             device_name = self.microphone_combo.currentText()
-            print(f"[ui] start_recording device_name={device_name}")
-            print(f"[ui] start_recording device_index={device_index}")
-            log_event(f"start_recording device_name={device_name}")
-            log_event(f"start_recording device_index={device_index}")
+            log_event(f"start_recording device_name={device_name} index={device_index}")
+            
             self.recorder.start(device_index=device_index)
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
-            self.status_label.setText("System Status: Recording...")
+            self.record_button.setText("Stop Recording")
+            self.record_button.setStyleSheet("QPushButton#RecordToggleBtn { color: #FF3B30; font-weight: bold; }")
+            
+            self.set_app_status("recording")
             log_event("start_recording succeeded")
         except Exception as exc:
             log_event(f"start_recording failed: {repr(exc)}")
+            self.set_app_status("error", f"Error: {exc}")
             self._show_error(str(exc))
 
     def stop_recording(self) -> None:
         try:
             wav_path = self.recorder.stop()
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(False)
+            self.record_button.setText("Start Recording")
+            self.record_button.setStyleSheet("")
             log_event(f"audio saved path={wav_path}")
 
             settings = self._settings_from_ui()
             if not settings.whisper_exe_path or not settings.model_path:
-                message = (
-                    "Recording saved successfully. Set the whisper.cpp executable and model file "
-                    "before transcription."
-                )
+                message = "Recording saved. Select executable and model."
                 log_event(f"stop_recording skipped transcription: {message} wav_path={wav_path}")
-                self.start_button.setEnabled(True)
-                self.status_label.setText(message)
+                self.set_app_status("idle", message)
                 return
             if not self._ensure_selected_model_available(settings):
-                self.start_button.setEnabled(True)
-                self.status_label.setText("System Status: Recording saved. Selected Whisper model is missing.")
+                self.set_app_status("idle", "Selected Whisper model is missing")
                 return
 
-            self.status_label.setText("System Status: Transcribing...")
+            self.set_app_status("processing")
             self.last_cleanup_warning = ""
             self.worker_source = "manual"
             engine = WhisperCppEngine(
@@ -599,44 +633,52 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             log_event(f"stop_recording failed: {repr(exc)}")
             log_event(traceback.format_exc())
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
+            self.record_button.setText("Start Recording")
+            self.record_button.setStyleSheet("")
+            self.set_app_status("error", f"Error: {exc}")
             self._show_error(str(exc))
 
     def _transcription_finished(self, raw_text: str, cleaned_text: str) -> None:
         self.raw_text.setPlainText(raw_text)
         self.cleaned_text.setPlainText(cleaned_text)
         self._record_dictation_stats(raw_text, cleaned_text)
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        
         if self.last_cleanup_warning:
-            self.status_label.setText(f"System Status: {self.last_cleanup_warning} Falling back to raw text.")
+            self.set_app_status("idle", f"Ready (Warning: {self.last_cleanup_warning})")
         else:
-            self.status_label.setText("System Status: Ready")
+            self.set_app_status("idle", "Ready")
+            
         if self.worker_source == "push_to_talk":
             self._finish_push_to_talk(raw_text, cleaned_text)
 
     def _transcription_failed(self, message: str) -> None:
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        self.record_button.setText("Start Recording")
+        self.record_button.setStyleSheet("")
+        
+        self.set_app_status("error", f"Error: {message}")
+        QTimer.singleShot(2500, lambda: self.set_app_status("idle"))
+        
         if self.worker_source == "push_to_talk":
             self.push_to_talk_state = "error"
-            self._set_overlay_state("error")
+            
         self._show_error(message)
 
     def copy_cleaned_text(self) -> None:
         QApplication.clipboard().setText(self.cleaned_text.toPlainText())
         log_event("clipboard copied from button")
-        self.status_label.setText("System Status: Cleaned text copied to clipboard!")
+        self.status_label.setText("Cleaned text copied!")
+
+    def show_stats_dashboard(self) -> None:
+        dialog = StatisticsDashboardDialog(self)
+        dialog.exec()
 
     def _show_error(self, message: str) -> None:
-        self.status_label.setText(f"System Status: Error: {message}")
-        QMessageBox.warning(self, "Voice Cleanup AI", message)
+        QMessageBox.warning(self, "Voice Cleanup", message)
 
     def _cleanup_warning(self, message: str) -> None:
         self.last_cleanup_warning = message
-        self.status_label.setText(f"System Status: {message} Falling back to raw text.")
-        log_event(f"cleanup warning shown: {message}")
+        self.status_label.setText(f"Warning: {message}")
+        log_event(f"cleanup warning: {message}")
 
     def closeEvent(self, event) -> None:
         if hasattr(self, "hotkey_controller"):
@@ -650,6 +692,29 @@ class MainWindow(QMainWindow):
         self.hotkey_controller.configure(settings.enable_global_push_to_talk, settings.hotkey_choice)
         if not settings.overlay_enabled:
             self.overlay.hide()
+        else:
+            self.overlay.set_state("idle")
+            self.overlay.show()
+
+    def set_app_status(self, state: str, message: str = "") -> None:
+        # Sync Status dot & text on Title bar
+        self.title_bar.set_status(state)
+        
+        # Sync bottom label status text
+        if message:
+            self.status_label.setText(message)
+        else:
+            if state == "idle":
+                self.status_label.setText("Ready")
+            elif state == "recording":
+                self.status_label.setText("Listening...")
+            elif state == "processing":
+                self.status_label.setText("Processing...")
+            elif state == "error":
+                self.status_label.setText("Error")
+                
+        # Sync Floating overlay state
+        self._set_overlay_state(state)
 
     @Slot()
     def _push_to_talk_pressed(self) -> None:
@@ -669,13 +734,10 @@ class MainWindow(QMainWindow):
             device_index = self.microphone_combo.currentData()
             self.recorder.start(device_index=device_index)
             self.push_to_talk_state = "recording"
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(False)
-            self.status_label.setText("System Status: PTT Recording...")
-            self._set_overlay_state("recording")
+            self.set_app_status("recording")
         except Exception as exc:
             self.push_to_talk_state = "error"
-            self._set_overlay_state("error")
+            self.set_app_status("error", f"PTT Error: {exc}")
             log_event(f"push_to_talk start failed: {repr(exc)}")
             log_event(traceback.format_exc())
             self._show_error(str(exc))
@@ -691,14 +753,11 @@ class MainWindow(QMainWindow):
             wav_path = self.recorder.stop()
             log_event(f"audio saved path={wav_path}")
             self.push_to_talk_state = "processing"
-            self.status_label.setText("System Status: PTT Processing...")
-            self._set_overlay_state("processing")
+            self.set_app_status("processing")
             self._start_push_to_talk_worker(wav_path)
         except Exception as exc:
             self.push_to_talk_state = "error"
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
-            self._set_overlay_state("error")
+            self.set_app_status("error", f"PTT Error: {exc}")
             log_event(f"push_to_talk stop failed: {repr(exc)}")
             log_event(traceback.format_exc())
             self._show_error(str(exc))
@@ -707,9 +766,7 @@ class MainWindow(QMainWindow):
         settings = self._settings_from_ui()
         if not self._ensure_selected_model_available(settings):
             self.push_to_talk_state = "error"
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
-            self._set_overlay_state("error")
+            self.set_app_status("error", "Whisper model missing")
             return
         engine = WhisperCppEngine(
             executable_path=settings.whisper_exe_path,
@@ -767,10 +824,10 @@ class MainWindow(QMainWindow):
         try:
             from download_models import download_model
 
-            self.status_label.setText("System Status: Downloading Whisper model...")
+            self.status_label.setText("Downloading Whisper model...")
             QApplication.processEvents()
             download_model(model_size)
-            self.status_label.setText("System Status: Whisper model downloaded")
+            self.status_label.setText("Whisper model downloaded")
             log_event(f"downloaded whisper model size={model_size}")
         except Exception as exc:
             log_event(f"model download failed: {repr(exc)}")
@@ -779,7 +836,12 @@ class MainWindow(QMainWindow):
 
     def _finish_push_to_talk(self, raw_text: str, cleaned_text: str) -> None:
         self.push_to_talk_state = "done"
-        self._set_overlay_state("done")
+        self.set_app_status("idle")
+        
+        # Set text in window
+        self.raw_text.setPlainText(raw_text)
+        self.cleaned_text.setPlainText(cleaned_text)
+        
         if cleaned_text.strip():
             QApplication.clipboard().setText(cleaned_text)
             log_event("clipboard copied from push_to_talk")
@@ -806,7 +868,7 @@ class MainWindow(QMainWindow):
     def _reset_push_to_talk_overlay(self) -> None:
         if self.push_to_talk_state == "done":
             self.push_to_talk_state = "idle"
-            self._set_overlay_state("idle")
+            self.set_app_status("idle")
 
     def _set_overlay_state(self, state: str) -> None:
         if self._settings_from_ui().overlay_enabled:
@@ -817,5 +879,5 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _push_to_talk_error(self, message: str) -> None:
         self.push_to_talk_state = "error"
-        self._set_overlay_state("error")
+        self.set_app_status("error", f"PTT error: {message}")
         self._show_error(f"Global push-to-talk failed: {message}")

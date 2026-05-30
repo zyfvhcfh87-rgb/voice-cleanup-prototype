@@ -1,5 +1,6 @@
 from pathlib import Path
 import traceback
+from time import perf_counter
 
 from PySide6.QtCore import QThread, QTimer, Signal, Slot, Qt
 from PySide6.QtGui import QKeySequence, QShortcut, QColor
@@ -17,7 +18,12 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
 )
 
-from audio.recorder import AudioRecorder, list_input_devices, log_event
+from audio.recorder import (
+    AudioRecorder,
+    get_wav_duration_seconds,
+    list_input_devices,
+    log_event,
+)
 from cleanup.asr_postprocess import ASRPostProcessor
 from cleanup.ai_cleanup import NoOpCleaner
 from cleanup.ollama_cleanup import OllamaCleaner
@@ -33,28 +39,53 @@ from config.settings import (
 from frontend.hotkey_controller import PushToTalkHotkeyController
 from frontend.overlay import MicrophoneOverlay
 from frontend.preferences_dialog import PreferencesDialog
-from transcription.whisper_engine import WhisperCppEngine
+from transcription.persistent_whisper import (
+    ManagedWhisperEngine,
+    PersistentWhisperManager,
+)
+from transcription.timing import (
+    StageTiming,
+    TranscriptionTimingReport,
+    emit_timing_report,
+)
 from frontend.styles import QSS_STYLING, TitleBar, GlassCard, SwitchToggle, SegmentedControl
 from frontend.stats_dialog import StatisticsDashboardDialog
 
 
 class TranscriptionWorker(QThread):
-    finished_ok = Signal(str, str)
+    finished_ok = Signal(str, str, object)
     failed = Signal(str)
     cleanup_warning = Signal(str)
 
-    def __init__(self, engine: WhisperCppEngine, cleaner, wav_path: Path) -> None:
+    def __init__(
+        self,
+        engine,
+        cleaner,
+        wav_path: Path,
+        model_mode: str,
+        model_name: str,
+        audio_duration_seconds: float,
+        released_at: float,
+        initial_stages: list[StageTiming] | None = None,
+    ) -> None:
         super().__init__()
         self.engine = engine
         self.cleaner = cleaner
         self.wav_path = wav_path
+        self.model_mode = model_mode
+        self.model_name = model_name
+        self.audio_duration_seconds = audio_duration_seconds
+        self.released_at = released_at
+        self.initial_stages = initial_stages or []
 
     def run(self) -> None:
         try:
             log_event("transcription started")
-            raw_text = self.engine.transcribe(self.wav_path)
+            whisper_result = self.engine.transcribe_with_timing(self.wav_path)
+            raw_text = whisper_result.text
             log_event("transcription finished")
             log_event("cleanup started")
+            cleanup_started = perf_counter()
             try:
                 cleaned_text = self.cleaner.clean(raw_text)
             except Exception as exc:
@@ -63,8 +94,23 @@ class TranscriptionWorker(QThread):
                 log_event(traceback.format_exc())
                 self.cleanup_warning.emit(warning)
                 cleaned_text = raw_text
+            cleanup_stage = StageTiming(
+                "cleanup_total",
+                (perf_counter() - cleanup_started) * 1000,
+            )
             log_event("cleanup finished")
-            self.finished_ok.emit(raw_text, cleaned_text)
+            timing_report = TranscriptionTimingReport(
+                model_mode=self.model_mode,
+                model_name=self.model_name,
+                audio_duration_seconds=self.audio_duration_seconds,
+                stages=[
+                    *self.initial_stages,
+                    *whisper_result.stages,
+                    cleanup_stage,
+                ],
+                whisper_cpp_timings_ms=whisper_result.whisper_cpp_timings_ms,
+            )
+            self.finished_ok.emit(raw_text, cleaned_text, timing_report)
         except Exception as exc:
             log_event(f"transcription worker failed: {repr(exc)}")
             log_event(traceback.format_exc())
@@ -87,6 +133,11 @@ class MainWindow(QMainWindow):
 
         self.settings = load_settings()
         self.recorder = AudioRecorder()
+        self.whisper_manager = PersistentWhisperManager()
+        self.whisper_idle_timer = QTimer(self)
+        self.whisper_idle_timer.setInterval(60_000)
+        self.whisper_idle_timer.timeout.connect(self.whisper_manager.close_if_idle)
+        self.whisper_idle_timer.start()
         self.worker: TranscriptionWorker | None = None
         self.worker_source = "manual"
         self.push_to_talk_state = "idle"
@@ -480,8 +531,14 @@ class MainWindow(QMainWindow):
             self._show_error(str(exc))
 
     def stop_recording(self) -> None:
+        released_at = perf_counter()
         try:
+            recording_stop_started = perf_counter()
             wav_path = self.recorder.stop()
+            recording_stop_stage = StageTiming(
+                "recording_stop_total",
+                (perf_counter() - recording_stop_started) * 1000,
+            )
             self.record_button.setText("Start Recording")
             self.record_button.setStyleSheet("")
             log_event(f"audio saved path={wav_path}")
@@ -499,12 +556,22 @@ class MainWindow(QMainWindow):
             self.set_app_status("processing")
             self.last_cleanup_warning = ""
             self.worker_source = "manual"
-            engine = WhisperCppEngine(
-                executable_path=settings.whisper_exe_path,
-                model_path=settings.model_path,
+            engine = ManagedWhisperEngine(
+                self.whisper_manager,
+                settings.whisper_exe_path,
+                settings.model_path,
             )
             cleaner = self._create_cleaner(settings)
-            self.worker = TranscriptionWorker(engine, cleaner, wav_path)
+            self.worker = TranscriptionWorker(
+                engine,
+                cleaner,
+                wav_path,
+                model_mode=get_whisper_model_info(settings.model_size)["label"],
+                model_name=Path(settings.model_path).name,
+                audio_duration_seconds=self._audio_duration_seconds(wav_path),
+                released_at=released_at,
+                initial_stages=[recording_stop_stage],
+            )
             self.worker.finished_ok.connect(self._transcription_finished)
             self.worker.failed.connect(self._transcription_failed)
             self.worker.cleanup_warning.connect(self._cleanup_warning)
@@ -517,7 +584,12 @@ class MainWindow(QMainWindow):
             self.set_app_status("error", f"Error: {exc}")
             self._show_error(str(exc))
 
-    def _transcription_finished(self, raw_text: str, cleaned_text: str) -> None:
+    def _transcription_finished(
+        self,
+        raw_text: str,
+        cleaned_text: str,
+        timing_report: TranscriptionTimingReport | None = None,
+    ) -> None:
         self.raw_text.setPlainText(raw_text)
         self.cleaned_text.setPlainText(cleaned_text)
         self._record_dictation_stats(raw_text, cleaned_text)
@@ -529,6 +601,12 @@ class MainWindow(QMainWindow):
             
         if self.worker_source == "push_to_talk":
             self._finish_push_to_talk(raw_text, cleaned_text)
+        if timing_report is not None and self.worker is not None:
+            timing_report.add_stage(
+                "end_to_end_after_release",
+                (perf_counter() - self.worker.released_at) * 1000,
+            )
+            emit_timing_report(timing_report, logger=log_event)
 
     def _transcription_failed(self, message: str) -> None:
         self.record_button.setText("Start Recording")
@@ -562,6 +640,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         if hasattr(self, "hotkey_controller"):
             self.hotkey_controller.stop()
+        if hasattr(self, "whisper_idle_timer"):
+            self.whisper_idle_timer.stop()
+        if hasattr(self, "whisper_manager"):
+            self.whisper_manager.close()
         if hasattr(self, "overlay"):
             self.overlay.close()
         super().closeEvent(event)
@@ -627,13 +709,23 @@ class MainWindow(QMainWindow):
             log_event(f"push_to_talk release ignored state={self.push_to_talk_state}")
             return
 
+        released_at = perf_counter()
         try:
             log_event("push_to_talk stop recording")
+            recording_stop_started = perf_counter()
             wav_path = self.recorder.stop()
+            recording_stop_stage = StageTiming(
+                "recording_stop_total",
+                (perf_counter() - recording_stop_started) * 1000,
+            )
             log_event(f"audio saved path={wav_path}")
             self.push_to_talk_state = "processing"
             self.set_app_status("processing")
-            self._start_push_to_talk_worker(wav_path)
+            self._start_push_to_talk_worker(
+                wav_path,
+                released_at,
+                [recording_stop_stage],
+            )
         except Exception as exc:
             self.push_to_talk_state = "error"
             self.set_app_status("error", f"PTT Error: {exc}")
@@ -641,24 +733,46 @@ class MainWindow(QMainWindow):
             log_event(traceback.format_exc())
             self._show_error(str(exc))
 
-    def _start_push_to_talk_worker(self, wav_path: Path) -> None:
+    def _start_push_to_talk_worker(
+        self,
+        wav_path: Path,
+        released_at: float,
+        initial_stages: list[StageTiming],
+    ) -> None:
         settings = self._settings_from_ui()
         if not self._ensure_selected_model_available(settings):
             self.push_to_talk_state = "error"
             self.set_app_status("error", "Whisper model missing")
             return
-        engine = WhisperCppEngine(
-            executable_path=settings.whisper_exe_path,
-            model_path=settings.model_path,
+        engine = ManagedWhisperEngine(
+            self.whisper_manager,
+            settings.whisper_exe_path,
+            settings.model_path,
         )
         cleaner = self._create_cleaner(settings)
         self.worker_source = "push_to_talk"
         self.last_cleanup_warning = ""
-        self.worker = TranscriptionWorker(engine, cleaner, wav_path)
+        self.worker = TranscriptionWorker(
+            engine,
+            cleaner,
+            wav_path,
+            model_mode=get_whisper_model_info(settings.model_size)["label"],
+            model_name=Path(settings.model_path).name,
+            audio_duration_seconds=self._audio_duration_seconds(wav_path),
+            released_at=released_at,
+            initial_stages=initial_stages,
+        )
         self.worker.finished_ok.connect(self._transcription_finished)
         self.worker.failed.connect(self._transcription_failed)
         self.worker.cleanup_warning.connect(self._cleanup_warning)
         self.worker.start()
+
+    def _audio_duration_seconds(self, wav_path: Path) -> float:
+        try:
+            return get_wav_duration_seconds(wav_path)
+        except Exception as exc:
+            log_event(f"wav duration read failed, falling back to recorder duration: {repr(exc)}")
+            return getattr(self.recorder, "last_duration", 0.0)
 
     def _create_cleaner(self, settings: AppSettings):
         if not settings.cleanup_enabled or settings.cleanup_backend == "none":

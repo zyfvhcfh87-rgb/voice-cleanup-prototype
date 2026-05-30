@@ -38,6 +38,7 @@ from config.settings import (
 )
 from frontend.hotkey_controller import PushToTalkHotkeyController
 from frontend.overlay import MicrophoneOverlay
+from frontend.overlay_visibility import should_show_mic_overlay
 from frontend.preferences_dialog import PreferencesDialog
 from transcription.persistent_whisper import (
     ManagedWhisperEngine,
@@ -56,6 +57,7 @@ class TranscriptionWorker(QThread):
     finished_ok = Signal(str, str, object)
     failed = Signal(str)
     cleanup_warning = Signal(str)
+    stage_changed = Signal(str)
 
     def __init__(
         self,
@@ -81,10 +83,12 @@ class TranscriptionWorker(QThread):
     def run(self) -> None:
         try:
             log_event("transcription started")
+            self.stage_changed.emit("transcribing")
             whisper_result = self.engine.transcribe_with_timing(self.wav_path)
             raw_text = whisper_result.text
             log_event("transcription finished")
             log_event("cleanup started")
+            self.stage_changed.emit("cleaning")
             cleanup_started = perf_counter()
             try:
                 cleaned_text = self.cleaner.clean(raw_text)
@@ -142,6 +146,10 @@ class MainWindow(QMainWindow):
         self.worker_source = "manual"
         self.push_to_talk_state = "idle"
         self.last_cleanup_warning = ""
+        self._overlay_hide_timer = QTimer(self)
+        self._overlay_hide_timer.setSingleShot(True)
+        self._overlay_hide_timer.setInterval(800)
+        self._overlay_hide_timer.timeout.connect(self._hide_overlay_if_idle)
 
         self._build_ui()
         self.setStyleSheet(QSS_STYLING)
@@ -157,9 +165,6 @@ class MainWindow(QMainWindow):
 
         # Set initial status dot & visibility
         self.set_app_status("idle")
-        if self.settings.overlay_enabled:
-            self.overlay.set_state("idle")
-            self.overlay.show()
 
     def _build_ui(self) -> None:
         # Outer Widget is fully transparent to allow drop shadow of CentralWidget to bleed on desktop
@@ -434,7 +439,7 @@ class MainWindow(QMainWindow):
             ollama_model=self.settings.ollama_model,
             enable_global_push_to_talk=self.enable_ptt_switch.isChecked(),
             enable_auto_paste=self.enable_auto_paste_switch.isChecked(),
-            overlay_enabled=self.settings.overlay_enabled,
+            overlay_visibility_mode=self.settings.overlay_visibility_mode,
             hotkey_choice=self.settings.hotkey_choice,
         )
 
@@ -533,6 +538,7 @@ class MainWindow(QMainWindow):
     def stop_recording(self) -> None:
         released_at = perf_counter()
         try:
+            self.set_app_status("stopping", "Finalizing recording...")
             recording_stop_started = perf_counter()
             wav_path = self.recorder.stop()
             recording_stop_stage = StageTiming(
@@ -575,6 +581,7 @@ class MainWindow(QMainWindow):
             self.worker.finished_ok.connect(self._transcription_finished)
             self.worker.failed.connect(self._transcription_failed)
             self.worker.cleanup_warning.connect(self._cleanup_warning)
+            self.worker.stage_changed.connect(self._transcription_stage_changed)
             self.worker.start()
         except Exception as exc:
             log_event(f"stop_recording failed: {repr(exc)}")
@@ -651,11 +658,7 @@ class MainWindow(QMainWindow):
     def _apply_push_to_talk_settings(self) -> None:
         settings = self._settings_from_ui()
         self.hotkey_controller.configure(settings.enable_global_push_to_talk, settings.hotkey_choice)
-        if not settings.overlay_enabled:
-            self.overlay.hide()
-        else:
-            self.overlay.set_state("idle")
-            self.overlay.show()
+        self._set_overlay_state("idle")
 
     def set_app_status(self, state: str, message: str = "") -> None:
         # Sync Status dot & text on Title bar
@@ -671,6 +674,14 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("Listening...")
             elif state == "processing":
                 self.status_label.setText("Processing...")
+            elif state == "stopping":
+                self.status_label.setText("Finalizing recording...")
+            elif state == "transcribing":
+                self.status_label.setText("Transcribing...")
+            elif state == "cleaning":
+                self.status_label.setText("Cleaning...")
+            elif state == "inserting":
+                self.status_label.setText("Inserting...")
             elif state == "error":
                 self.status_label.setText("Error")
                 
@@ -712,6 +723,7 @@ class MainWindow(QMainWindow):
         released_at = perf_counter()
         try:
             log_event("push_to_talk stop recording")
+            self.set_app_status("stopping", "Finalizing recording...")
             recording_stop_started = perf_counter()
             wav_path = self.recorder.stop()
             recording_stop_stage = StageTiming(
@@ -765,6 +777,7 @@ class MainWindow(QMainWindow):
         self.worker.finished_ok.connect(self._transcription_finished)
         self.worker.failed.connect(self._transcription_failed)
         self.worker.cleanup_warning.connect(self._cleanup_warning)
+        self.worker.stage_changed.connect(self._transcription_stage_changed)
         self.worker.start()
 
     def _audio_duration_seconds(self, wav_path: Path) -> float:
@@ -773,6 +786,10 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             log_event(f"wav duration read failed, falling back to recorder duration: {repr(exc)}")
             return getattr(self.recorder, "last_duration", 0.0)
+
+    @Slot(str)
+    def _transcription_stage_changed(self, state: str) -> None:
+        self.set_app_status(state)
 
     def _create_cleaner(self, settings: AppSettings):
         if not settings.cleanup_enabled or settings.cleanup_backend == "none":
@@ -839,6 +856,7 @@ class MainWindow(QMainWindow):
             QApplication.clipboard().setText(cleaned_text)
             log_event("clipboard copied from push_to_talk")
             if self._settings_from_ui().enable_auto_paste:
+                self.set_app_status("inserting", "Inserting...")
                 log_event("auto-paste scheduled")
                 QTimer.singleShot(250, self._auto_paste_cleaned_text)
         else:
@@ -864,9 +882,17 @@ class MainWindow(QMainWindow):
             self.set_app_status("idle")
 
     def _set_overlay_state(self, state: str) -> None:
-        if self._settings_from_ui().overlay_enabled:
+        mode = self._settings_from_ui().overlay_visibility_mode
+        if should_show_mic_overlay(mode, state):
+            self._overlay_hide_timer.stop()
             self.overlay.set_state(state)
+        elif mode == "active" and state == "idle" and self.overlay.isVisible():
+            self._overlay_hide_timer.start()
         else:
+            self.overlay.hide()
+
+    def _hide_overlay_if_idle(self) -> None:
+        if not should_show_mic_overlay(self._settings_from_ui().overlay_visibility_mode, "idle"):
             self.overlay.hide()
 
     @Slot(str)

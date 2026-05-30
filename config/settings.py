@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import InitVar, asdict, dataclass
 from pathlib import Path
 import json
 
@@ -67,8 +67,15 @@ class AppSettings:
     ollama_model: str = "qwen2.5:1.5b"
     enable_global_push_to_talk: bool = True
     enable_auto_paste: bool = True
-    overlay_enabled: bool = True
+    overlay_visibility_mode: str = "active"
     hotkey_choice: str = "ctrl_win"
+    overlay_enabled: InitVar[bool | None] = None
+
+    def __post_init__(self, overlay_enabled: bool | None) -> None:
+        if overlay_enabled is not None:
+            self.overlay_visibility_mode = "always" if overlay_enabled else "never"
+        elif self.overlay_visibility_mode not in {"always", "active", "never"}:
+            self.overlay_visibility_mode = "active"
 
 
 def load_settings() -> AppSettings:
@@ -88,6 +95,8 @@ def load_settings() -> AppSettings:
         settings.model_path = str(get_whisper_model_path(settings.model_size))
         if settings.cleanup_backend == "ollama":
             settings.cleanup_backend = "asr_postprocess"
+        if settings.overlay_visibility_mode not in {"always", "active", "never"}:
+            settings.overlay_visibility_mode = "active"
         return settings
     except Exception:
         return AppSettings()

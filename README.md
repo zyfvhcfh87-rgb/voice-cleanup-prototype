@@ -25,6 +25,7 @@ The app records microphone audio, transcribes it locally with `whisper.cpp`, cle
 |-- main.py
 |-- build_exe.ps1
 |-- diagnose_audio.py
+|-- download_models.py
 |-- requirements.txt
 |-- audio/
 |   |-- recorder.py
@@ -47,9 +48,11 @@ The app records microphone audio, transcribes it locally with `whisper.cpp`, cle
 |       |-- *.dll
 |       |-- models/
 |           |-- ggml-base.bin
+|           |-- ggml-small.bin
+|           |-- ggml-medium.bin
 ```
 
-The Whisper model file is intentionally ignored by Git because it is large.
+Whisper model files are intentionally ignored by Git because they are large.
 
 ## Local Development Setup
 
@@ -68,16 +71,44 @@ Run the app:
 .\.venv\Scripts\python.exe main.py
 ```
 
-## whisper.cpp Setup
+## whisper.cpp Setup And Models
 
-The app expects these default paths:
+The app expects this default tool layout:
 
 ```text
 tools/whisper.cpp/whisper-cli.exe
 tools/whisper.cpp/models/ggml-base.bin
+tools/whisper.cpp/models/ggml-small.bin
+tools/whisper.cpp/models/ggml-medium.bin
 ```
 
-The executable and DLL files are stored in `tools/whisper.cpp/`. The model file should be placed in `tools/whisper.cpp/models/`.
+The executable and DLL files are stored in `tools/whisper.cpp/`. Model files should be placed in `tools/whisper.cpp/models/`.
+
+Supported model choices:
+
+```text
+Base   - ~142 MB - Fast, lower accuracy
+Small  - ~466 MB - Balanced
+Medium - ~1.5 GB - Slower, higher accuracy
+```
+
+Base remains the default for new installations.
+
+Download models with the helper script:
+
+```powershell
+.\.venv\Scripts\python.exe download_models.py base
+.\.venv\Scripts\python.exe download_models.py small
+.\.venv\Scripts\python.exe download_models.py medium
+```
+
+You can also pass multiple models:
+
+```powershell
+.\.venv\Scripts\python.exe download_models.py base small medium
+```
+
+The app detects installed models automatically. If you select Small or Medium and the model file is missing, the app shows a friendly download prompt.
 
 To verify whisper.cpp manually:
 
@@ -212,6 +243,8 @@ dist/VoiceCleanupPrototype/
 |       |-- *.dll
 |       |-- models/
 |           |-- ggml-base.bin
+|           |-- ggml-small.bin
+|           |-- ggml-medium.bin
 |-- _internal/
 ```
 

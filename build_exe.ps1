@@ -69,7 +69,7 @@ if (-not (Test-Path "tools\whisper.cpp\models\ggml-base.bin")) {
 New-Item -ItemType Directory -Force -Path "$destDir\tools\whisper.cpp\models" | Out-Null
 Copy-Item "tools\whisper.cpp\whisper-cli.exe" "$destDir\tools\whisper.cpp\" -Force
 Copy-Item "tools\whisper.cpp\*.dll" "$destDir\tools\whisper.cpp\" -Force
-Copy-Item "tools\whisper.cpp\models\ggml-base.bin" "$destDir\tools\whisper.cpp\models\" -Force
+Copy-Item "tools\whisper.cpp\models\ggml-*.bin" "$destDir\tools\whisper.cpp\models\" -Force
 
 Write-Host "[4/4] Done." -ForegroundColor Yellow
 Write-Host "Built: $destDir\VoiceCleanupPrototype.exe" -ForegroundColor Green

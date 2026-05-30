@@ -14,7 +14,7 @@ class WhisperCppEngine:
         if not self.executable_path.strip() or not exe.is_file():
             raise FileNotFoundError("whisper.cpp executable was not found. Set it in Settings.")
         if not self.model_path.strip() or not model.is_file():
-            raise FileNotFoundError("Whisper model file was not found. Set the ggml-base.bin path in Settings.")
+            raise FileNotFoundError(f"Whisper model file was not found: {model}")
         if not wav_path.exists():
             raise FileNotFoundError(f"Recording file does not exist: {wav_path}")
 

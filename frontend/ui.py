@@ -1,8 +1,8 @@
 from pathlib import Path
 import traceback
 
-from PySide6.QtCore import QThread, QTimer, Signal, Slot, Qt
-from PySide6.QtGui import QKeySequence, QShortcut, QColor
+from PySide6.QtCore import QThread, QTimer, Signal, Slot, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -25,7 +25,15 @@ from audio.recorder import AudioRecorder, list_input_devices, log_event
 from cleanup.asr_postprocess import ASRPostProcessor
 from cleanup.ai_cleanup import NoOpCleaner
 from cleanup.ollama_cleanup import OllamaCleaner
-from config.settings import AppSettings, load_settings, save_settings
+from config.settings import (
+    AppSettings,
+    WHISPER_MODELS,
+    get_whisper_model_info,
+    get_whisper_model_path,
+    load_settings,
+    save_settings,
+    WHISPER_MODELS_DIR,
+)
 from frontend.hotkey_controller import PushToTalkHotkeyController
 from frontend.overlay import MicrophoneOverlay
 from transcription.whisper_engine import WhisperCppEngine
@@ -173,10 +181,17 @@ class MainWindow(QMainWindow):
         lbl_model = QLabel("Model Size:")
         lbl_model.setFixedWidth(75)
         self.model_size_combo = QComboBox()
-        self.model_size_combo.addItems(["base", "tiny", "small", "medium", "large"])
+        for model_key, model_info in WHISPER_MODELS.items():
+            self.model_size_combo.addItem(model_info["label"], model_key)
+        self.model_size_combo.currentIndexChanged.connect(self._model_selection_changed)
         model_row.addWidget(lbl_model)
         model_row.addWidget(self.model_size_combo, 1)
         card1_layout.addLayout(model_row)
+
+        self.model_status_label = QLabel("")
+        self.model_status_label.setWordWrap(True)
+        self.model_status_label.setProperty("class", "CardSubHeader")
+        card1_layout.addWidget(self.model_status_label)
         
         settings_layout.addWidget(card1)
 
@@ -211,9 +226,10 @@ class MainWindow(QMainWindow):
         lbl_path.setFixedWidth(80)
         self.model_path_edit = QLineEdit()
         self.model_path_edit.setPlaceholderText("Path to ggml-base.bin")
-        model_button = QPushButton("Browse")
+        self.model_path_edit.setReadOnly(True)
+        model_button = QPushButton("Folder")
         model_button.setObjectName("BrowseBtn")
-        model_button.clicked.connect(self._choose_model_file)
+        model_button.clicked.connect(self._open_models_folder)
         model_row2.addWidget(lbl_path)
         model_row2.addWidget(self.model_path_edit, 1)
         model_row2.addWidget(model_button)
@@ -367,9 +383,10 @@ class MainWindow(QMainWindow):
         shortcut.activated.connect(self._toggle_recording)
 
     def _load_settings_into_ui(self) -> None:
-        self.model_size_combo.setCurrentText(self.settings.model_size)
+        model_index = self.model_size_combo.findData(self.settings.model_size)
+        self.model_size_combo.setCurrentIndex(model_index if model_index >= 0 else 0)
         self.whisper_exe_edit.setText(self.settings.whisper_exe_path)
-        self.model_path_edit.setText(self.settings.model_path)
+        self._model_selection_changed()
         self.cleanup_prompt_edit.setPlainText(self.settings.cleanup_prompt)
         self.cleanup_enabled_checkbox.setChecked(self.settings.cleanup_enabled)
         cleanup_index = self.cleanup_backend_combo.findData(self.settings.cleanup_backend)
@@ -389,9 +406,9 @@ class MainWindow(QMainWindow):
     def _settings_from_ui(self) -> AppSettings:
         return AppSettings(
             microphone_name=self.microphone_combo.currentText(),
-            model_size=self.model_size_combo.currentText(),
+            model_size=self.model_size_combo.currentData(),
             whisper_exe_path=self.whisper_exe_edit.text().strip(),
-            model_path=self.model_path_edit.text().strip(),
+            model_path=str(get_whisper_model_path(self.model_size_combo.currentData())),
             cleanup_prompt=self.cleanup_prompt_edit.toPlainText().strip(),
             cleanup_backend=self.cleanup_backend_combo.currentData(),
             cleanup_enabled=self.cleanup_enabled_checkbox.isChecked(),
@@ -437,10 +454,19 @@ class MainWindow(QMainWindow):
         if path:
             self.whisper_exe_edit.setText(path)
 
-    def _choose_model_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Choose whisper.cpp model", "", "Whisper model (*.bin);;All files (*)")
-        if path:
-            self.model_path_edit.setText(path)
+    def _open_models_folder(self) -> None:
+        WHISPER_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(WHISPER_MODELS_DIR)))
+
+    def _model_selection_changed(self) -> None:
+        model_size = self.model_size_combo.currentData() or "base"
+        model_path = get_whisper_model_path(model_size)
+        model_info = get_whisper_model_info(model_size)
+        installed_text = "Installed" if model_path.is_file() else "Missing"
+        self.model_path_edit.setText(str(model_path))
+        self.model_status_label.setText(
+            f"{model_info['label']}: {model_info['description']} ({model_info['size']}) - {installed_text}"
+        )
 
     def _toggle_recording(self) -> None:
         if self.recorder.is_recording:
@@ -492,6 +518,10 @@ class MainWindow(QMainWindow):
                 log_event(f"stop_recording skipped transcription: {message} wav_path={wav_path}")
                 self.start_button.setEnabled(True)
                 self.status_label.setText(message)
+                return
+            if not self._ensure_selected_model_available(settings):
+                self.start_button.setEnabled(True)
+                self.status_label.setText("System Status: Recording saved. Selected Whisper model is missing.")
                 return
 
             self.status_label.setText("System Status: Transcribing...")
@@ -615,6 +645,12 @@ class MainWindow(QMainWindow):
 
     def _start_push_to_talk_worker(self, wav_path: Path) -> None:
         settings = self._settings_from_ui()
+        if not self._ensure_selected_model_available(settings):
+            self.push_to_talk_state = "error"
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+            self._set_overlay_state("error")
+            return
         engine = WhisperCppEngine(
             executable_path=settings.whisper_exe_path,
             model_path=settings.model_path,
@@ -642,6 +678,44 @@ class MainWindow(QMainWindow):
 
         log_event("cleanup backend asr_postprocess")
         return ASRPostProcessor()
+
+    def _ensure_selected_model_available(self, settings: AppSettings) -> bool:
+        model_path = get_whisper_model_path(settings.model_size)
+        if model_path.is_file():
+            return True
+
+        model_info = get_whisper_model_info(settings.model_size)
+        message = (
+            f"The selected Whisper model is not installed yet.\n\n"
+            f"Model: {model_info['label']} - {model_info['description']} ({model_info['size']})\n"
+            f"Expected file:\n{model_path}\n\n"
+            "Do you want to download it now?"
+        )
+        choice = QMessageBox.question(
+            self,
+            "Download Whisper Model",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if choice == QMessageBox.StandardButton.Yes:
+            self._download_selected_model(settings.model_size)
+        self._model_selection_changed()
+        return model_path.is_file()
+
+    def _download_selected_model(self, model_size: str) -> None:
+        try:
+            from download_models import download_model
+
+            self.status_label.setText("System Status: Downloading Whisper model...")
+            QApplication.processEvents()
+            download_model(model_size)
+            self.status_label.setText("System Status: Whisper model downloaded")
+            log_event(f"downloaded whisper model size={model_size}")
+        except Exception as exc:
+            log_event(f"model download failed: {repr(exc)}")
+            log_event(traceback.format_exc())
+            self._show_error(f"Could not download the Whisper model. Original error: {exc}")
 
     def _finish_push_to_talk(self, raw_text: str, cleaned_text: str) -> None:
         self.push_to_talk_state = "done"

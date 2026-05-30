@@ -20,7 +20,33 @@ else:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_WHISPER_EXE_PATH = PROJECT_ROOT / "tools" / "whisper.cpp" / "whisper-cli.exe"
-DEFAULT_MODEL_PATH = PROJECT_ROOT / "tools" / "whisper.cpp" / "models" / "ggml-base.bin"
+WHISPER_MODELS_DIR = PROJECT_ROOT / "tools" / "whisper.cpp" / "models"
+
+WHISPER_MODELS = {
+    "base": {
+        "label": "Base",
+        "filename": "ggml-base.bin",
+        "description": "Fast, lower accuracy",
+        "size": "~142 MB",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+    },
+    "small": {
+        "label": "Small",
+        "filename": "ggml-small.bin",
+        "description": "Balanced",
+        "size": "~466 MB",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+    },
+    "medium": {
+        "label": "Medium",
+        "filename": "ggml-medium.bin",
+        "description": "Slower, higher accuracy",
+        "size": "~1.5 GB",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+    },
+}
+
+DEFAULT_MODEL_PATH = WHISPER_MODELS_DIR / WHISPER_MODELS["base"]["filename"]
 DEFAULT_CLEANUP_PROMPT = (
     "Post-process this ASR transcript. Fix punctuation, capitalization, and grammar only. "
     "Preserve wording, tone, slang, pronouns, and meaning. Never answer questions. "
@@ -57,8 +83,9 @@ def load_settings() -> AppSettings:
             settings.model_path = str(DEFAULT_MODEL_PATH)
         if not settings.whisper_exe_path:
             settings.whisper_exe_path = str(DEFAULT_WHISPER_EXE_PATH)
-        if not settings.model_path:
-            settings.model_path = str(DEFAULT_MODEL_PATH)
+        if settings.model_size not in WHISPER_MODELS:
+            settings.model_size = "base"
+        settings.model_path = str(get_whisper_model_path(settings.model_size))
         if settings.cleanup_backend == "ollama":
             settings.cleanup_backend = "asr_postprocess"
         return settings
@@ -68,4 +95,19 @@ def load_settings() -> AppSettings:
 
 def save_settings(settings: AppSettings) -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
+    if settings.model_size in WHISPER_MODELS:
+        settings.model_path = str(get_whisper_model_path(settings.model_size))
     SETTINGS_FILE.write_text(json.dumps(asdict(settings), indent=2), encoding="utf-8")
+
+
+def get_whisper_model_path(model_size: str) -> Path:
+    model = WHISPER_MODELS.get(model_size, WHISPER_MODELS["base"])
+    return WHISPER_MODELS_DIR / model["filename"]
+
+
+def get_whisper_model_info(model_size: str) -> dict[str, str]:
+    return WHISPER_MODELS.get(model_size, WHISPER_MODELS["base"])
+
+
+def list_installed_whisper_models() -> list[str]:
+    return [name for name in WHISPER_MODELS if get_whisper_model_path(name).is_file()]
